@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 APP_TITLE = "Automazione BDAP"
-WINDOW_GEOMETRY = "1050x680"
+WINDOW_GEOMETRY = "1050x810"
 
 STATUS_SELECT_DATA = "Selezionare i dati necessari"
 STATUS_WORKSPACE_NOT_FOUND = "Workspace non trovato"
