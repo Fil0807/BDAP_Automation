@@ -310,7 +310,35 @@ TEMPLATE_SOURCES: dict = {
     },
     'contrastoallevasionetributaria': {
         'source_workbook': 'questionario',
-        'row_tolerance': 2.0,
+        'sheet_name_contains': [
+            'SEZ. II - DATI ENTRATE',
+            'SEZ. II-DATI ENTRATE',
+            'SEZ. II- DATI ENTRATE',
+            'SEZ. II- GEST. ENTRATE'
+        ],
+        'expected_label': [
+            'Recupero evasione IMU/TASI',
+            'IMU/TASI recupero evasione',
+            'Recupero evasione TARSU/TIA/TARES/TARI',
+            'TARSU/TIA/TARES/TARI recupero evasione'
+        ],
+        'label_check_cells': [
+            'B6',
+            'B12'
+        ],
+        'table_refs': [
+            {
+                'cell_ref': 'D7',
+                'year_cell_ref': 'D6'
+            },
+            {
+                'cell_ref': 'D13',
+                'year_cell_ref': 'D12'
+            }
+        ],
+        'optional': True,
+        'row_tolerance': 4,
+        'strict_expected_label': False
     },
     '%diriscossionecomplessiva': {
         'row_tolerance': 2.0,
@@ -432,5 +460,99 @@ TEMPLATE_SOURCES: dict = {
     },
     'resacontoagenti': {
         'source_workbook': 'questionario',
+    },
+    'ufficioavvocatura': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_ref': 'H67',
+        'expected_label': 'L’ente dispone di un ufficio di avvocatura',
+        'label_check_cells': ['B67'],
+        'optional': True,
+        'row_tolerance': 2,
+        'strict_expected_label': False
+    },
+    'avvocatidirigenti': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_ref': 'F70',
+        'expected_label': 'Numero avvocati',
+        'label_check_cells': ['C70'],
+        'optional': True,
+        'row_tolerance': 2
+    },
+    'avvocatifunzionari': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_ref': 'G70',
+        'expected_label': 'Numero avvocati',
+        'label_check_cells': ['C70'],
+        'optional': True,
+        'row_tolerance': 2
+    },
+    'fondiavvocaturadirigenti': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_ref': 'F71',
+        'expected_label': 'Importi confluiti',
+        'label_check_cells': ['C71'],
+        'optional': True
+    },
+    'fondiavvocaturafunzionari': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_ref': 'G71',
+        'expected_label': 'Importi confluiti',
+        'label_check_cells': ['C71'],
+        'optional': True
+    },
+    'incarichilegaliesterni': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_ref': 'H73',
+        'expected_label': 'L’ente ha affidato incarichi',
+        'label_check_cells': ['B73'],
+        'optional': True
+    },
+    'patrociniolegale': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_refs': [
+            'F75',
+            'G75'
+        ],
+        'expected_label': 'Patrocinio legale',
+        'label_check_cells': ['C75'],
+        'optional': True
+    },
+    'consulenzalegale': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_refs': [
+            'F76',
+            'G76'
+        ],
+        'expected_label': 'Consulenza',
+        'label_check_cells': ['C76'],
+        'optional': True
+    },
+    'servizilegali': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'SPESA_PERSONALE',
+        'cell_refs': [
+            'F77',
+            'G77'
+        ],
+        'expected_label': 'Servizi legali',
+        'label_check_cells': ['C77'],
+        'optional': True
+    },
+    'fondoperequativotari': {
+        'source_workbook': 'questionario',
+        'sheet_name_contains': 'GEST. FIN. RESIDUI',
+        'cell_ref': 'I42',
+        'expected_label': 'Fondo perequativo TARI',
+        'label_check_cells': ['B42'],
+        'optional': True,
+        'strict_expected_label': False
     },
 }

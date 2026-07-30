@@ -1,4 +1,4 @@
-"""Run the desktop application with ``python -m bdap_app``."""
+"""Per eseguire l'applicazione usare il comando: ``python -m bdap_app``."""
 
 from bdap_app.gui.gui import main
 

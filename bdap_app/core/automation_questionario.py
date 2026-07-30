@@ -361,7 +361,7 @@ def _discover_questionario_workbook(bdap_path: Optional[Path], year: int, specia
             return False
 
     def _is_questionario_candidate(path: Path) -> bool:
-        """Determina se un file è un candidato valido per essere il questionario, escludendo BDAP e file temporanei."""
+        """Determina se un file è un candidato valido per essere il questionario, escludendo BDAP, file temporanei e novità."""
         if not path.is_file() or path.suffix.lower() not in {".xlsx", ".xlsm"}:
             return False
         if path == bdap_path:
@@ -371,6 +371,9 @@ def _discover_questionario_workbook(bdap_path: Optional[Path], year: int, specia
         normalized_name = normalize_text(path.name)
         if "controllipost" in normalized_name:
             logger.debug(f"_is_questionario_candidate: {path} is a Controlli Post workbook")
+            return False
+        if "novit" in normalized_name:
+            logger.debug(f"_is_questionario_candidate: {path} is a Novità file, excluded")
             return False
         is_candidate = "questionario" in normalize_text(str(path))
         if not is_candidate:
@@ -729,6 +732,48 @@ def process_questionario_row(
                 )
             target_cell.comment = Comment(f"Fonte BDAP: {source_file_name} | {src_descr}", "BDAP Automation")
         return True, 1, wb_questionario, questionario_formula_wb, questionario_path_cache, None
+
+    elif "cell_refs" in data_source_mapping and "cell_ref" not in data_source_mapping:
+        # Handle cell_refs (list) without a singular cell_ref
+        row_tol = max(0, _coerce_int_or_default(data_source_mapping.get("row_tolerance", 1), 1))
+        expected_label = data_source_mapping.get("expected_label")
+        label_check_cells = data_source_mapping.get("label_check_cells")
+        cell_refs = data_source_mapping.get("cell_refs", [])
+        vals = []
+        refs = []
+        for cell_ref in cell_refs:
+            v, r = find_bdap_value_with_fallback(ws_bdap_src, cell_ref, max_offset=row_tol)
+            if v is not None:
+                vals.append(v)
+                refs.append(r or cell_ref)
+        if vals:
+            value = vals[0] if len(vals) == 1 else "\n".join(str(v) for v in vals)
+            actual_cell_ref = ";".join(refs)
+        elif expected_label:
+            # fallback: try finding the row by label and reading those cells
+            label_text = expected_label[0] if isinstance(expected_label, list) else str(expected_label)
+            found_row = find_nearby_title_row(
+                ws_bdap_src, label_text,
+                *(coordinate_to_tuple(cell_refs[0])),
+                row_tolerance=row_tol,
+            )
+            if found_row:
+                cell_line = []
+                for i, cell_ref in enumerate(cell_refs):
+                    col_letter = cell_ref[0]
+                    adj_ref = f"{col_letter}{found_row}"
+                    v, r = find_bdap_value_with_fallback(ws_bdap_src, adj_ref, max_offset=0)
+                    if v is not None:
+                        cell_line.append(v)
+                if cell_line:
+                    value = cell_line[0] if len(cell_line) == 1 else "\n".join(str(v) for v in cell_line)
+                    actual_cell_ref = ";".join(cell_refs)
+        if value is None:
+            if data_source_mapping.get("optional", False):
+                target_cell.value = None
+                target_cell.comment = None
+                return True, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
+            return False, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
 
     elif "cell_ref" in data_source_mapping:
         row_tol = max(0, _coerce_int_or_default(data_source_mapping.get("row_tolerance", 1), 1))
