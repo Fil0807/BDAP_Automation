@@ -1,7 +1,10 @@
 # Mappature deterministiche
 
 Questo documento descrive le voci configurate in `bdap_app/support/default_mappings.py`.
+
 Le mappature servono a ridurre ricerche ambigue nei workbook BDAP: per ogni voce del template si indica da quale workbook leggere, quale foglio usare, quale cella o strategia applicare e quale etichetta validare.
+
+<br><br>
 
 ## Come leggere una mappatura
 
@@ -28,6 +31,8 @@ In questo caso il programma:
 4. legge il valore da `B33`;
 5. scrive nel template il valore e il commento di tracciabilità.
 
+<br><br>
+
 ## Sorgenti supportate
 
 | `source_workbook` | Significato | Note operative |
@@ -40,6 +45,8 @@ In questo caso il programma:
 | `relazione` | Voce da relazione o PDF. | Al momento il flusso lascia la cella vuota: è una voce da gestire manualmente o con una futura estrazione da PDF. |
 | assente | Nessuna sorgente automatica definita. | La voce resta non risolta o viene gestita da logiche specifiche/fallback se presenti. |
 
+<br><br>
+
 ## Come aggiungere una nuova voce
 
 1. Individuare la voce nel template e ricavare la chiave normalizzata usata dal codice.
@@ -51,6 +58,8 @@ In questo caso il programma:
 7. Se il valore è una percentuale, impostare `is_percentage=True`.
 8. Aggiornare questa tabella e aggiungere o adattare un test mirato.
 
+<br><br>
+
 ## Checklist di manutenzione
 
 - Verificare che il foglio sia identificabile in modo stabile: usare `sheet_idx` solo se l'ordine dei fogli non cambia; in caso contrario preferire `sheet_name_contains`.
@@ -58,6 +67,9 @@ In questo caso il programma:
 - Non usare `strict_expected_label=True` se la dicitura cambia spesso tra anni o versioni BDAP.
 - Documentare qui le voci che restano manuali, così l'utente sa che non sono errori di automazione.
 - Dopo ogni nuova mappatura, eseguire i test e provare almeno un workbook reale o demo.
+
+
+<br><br>
 
 ## Elenco mappature
 
