@@ -49,14 +49,13 @@ In questo caso il programma:
 
 ## Come aggiungere una nuova voce
 
-1. Individuare la voce nel template e ricavare la chiave normalizzata usata dal codice.
+1. Individuare o aggiungere la nuova voce nel template e ricavarne la chiave.
 2. Stabilire la sorgente (`rendiconto`, `questionario`, `indicatori`, ecc.).
 3. Preferire un riferimento deterministico (`sheet_idx`/`sheet_name_contains` + `cell_ref`) quando la struttura BDAP è stabile.
 4. Aggiungere `expected_label` e `label_check_cells` quando possibile: servono a evitare di leggere una cella corretta solo per posizione ma sbagliata per contenuto.
 5. Usare `row_tolerance` solo se la riga può spostarsi tra versioni del file.
 6. Impostare `optional=True` per voci che possono mancare senza bloccare l'elaborazione.
 7. Se il valore è una percentuale, impostare `is_percentage=True`.
-8. Aggiornare questa tabella e aggiungere o adattare un test mirato.
 
 <br><br>
 
