@@ -153,9 +153,12 @@ def _extract_comune_from_workbook(path: Path) -> Optional[str]:
                 a7_value = None
                 b7_value = None
 
+            max_row = min(sheet.max_row, 40) if sheet.max_row is not None else 40
+            max_col = min(sheet.max_column, 12) if sheet.max_column is not None else 12
+
             if isinstance(a7_value, str) and normalize_token(a7_value) == normalize_token("Denominazione ente"):
                 # Scansiona la riga a destra di A7 e conserva il primo valore che sembra un nome di comune reale.
-                for col_idx in range(2, min(sheet.max_column or 0, 12) + 1):
+                for col_idx in range(2, max_col + 1):
                     row_value = sheet.cell(row=7, column=col_idx).value
                     if not isinstance(row_value, str):
                         continue
@@ -170,9 +173,6 @@ def _extract_comune_from_workbook(path: Path) -> Optional[str]:
 
                     if _looks_like_real_comune_name(candidate):
                         return candidate
-
-            max_row = min(sheet.max_row or 0, 40)
-            max_col = min(sheet.max_column or 0, 12)
             for row_idx in range(1, max_row + 1):
                 for col_idx in range(1, max_col + 1):
                     value = sheet.cell(row=row_idx, column=col_idx).value

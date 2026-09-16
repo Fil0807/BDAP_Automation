@@ -15,6 +15,11 @@ from ..support.controlli_post import (
     format_controlli_post_summary,
     write_controlli_post_sheet,
 )
+from ..support.conclusioni import (
+    detect_comune_name,
+    detect_population,
+    write_conclusioni_sheet,
+)
 from ..support.text_utils import _coerce_year_value
 from .cli_discovery import (
     discover_bdap_files_by_year,
@@ -368,3 +373,29 @@ def run_pipeline(
             log("Foglio CONTROLLI-POST non trovato nel template: riepilogo non scritto nel workbook.")
         log("")
         log(format_controlli_post_summary(controlli_report))
+
+    # Aggiorna il foglio CONCLUSIONI (C2: comune, C3: abitanti)
+    search_dirs: list[Path] = [args.output.parent]
+    if args.output.parent.parent and args.output.parent.parent.exists():
+        search_dirs.append(args.output.parent.parent)
+    if getattr(args, "bdap_dir", None) and args.bdap_dir.exists():
+        search_dirs.append(args.bdap_dir)
+        if args.bdap_dir.parent and args.bdap_dir.parent.exists():
+            search_dirs.append(args.bdap_dir.parent)
+
+    latest_year = max(years_to_process) if years_to_process else None
+    comune_name = detect_comune_name(
+        search_dirs=search_dirs,
+        bdap_files=bdap_by_year,
+        fallback_comune=getattr(args, "comune", None),
+    )
+    population = detect_population(
+        search_dirs=search_dirs,
+        target_year=latest_year,
+    )
+    write_conclusioni_sheet(
+        workbook_path=args.output,
+        comune_name=comune_name,
+        population=population,
+        log=log,
+    )

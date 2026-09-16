@@ -541,7 +541,7 @@ TEMPLATE_SOURCES: dict = {
         'cell_refs': [
             'F77',
             'G77'
-        ],
+    ],
         'expected_label': 'Servizi legali',
         'label_check_cells': ['C77'],
         'optional': True

@@ -3,6 +3,12 @@
 from .text_utils import normalize_text, label_match_score
 from .value_formatter import format_value_italian, coerce_numeric
 from .value_resolver import find_bdap_value_by_label, resolve_row_value_from_label
+from .conclusioni import (
+    clean_comune_name,
+    detect_comune_name,
+    detect_population,
+    write_conclusioni_sheet,
+)
 
 __all__ = [
     "normalize_text",
@@ -11,4 +17,8 @@ __all__ = [
     "coerce_numeric",
     "find_bdap_value_by_label",
     "resolve_row_value_from_label",
+    "clean_comune_name",
+    "detect_comune_name",
+    "detect_population",
+    "write_conclusioni_sheet",
 ]
