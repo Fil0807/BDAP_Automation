@@ -4,3 +4,28 @@ Fork (pubblico) del progetto https://github.com/Elisabetta-43/Stage_Locatelli co
 
 
 Sono state apportate modifiche a file di ricerca come ```./bdap_app/orchestration/cli_discovery.py``` per migliorare la gestione dei Path di alcuni componenti e sono stati rimossi alcuni file non necessari come le immagini di spiegazione e diagrammi
+
+
+<br><br>
+
+# Comandi fase testing
+In tutti i passaggi è consigliato la creazione di un ambiente di sviluppo tramite i seguenti comandi:
+
+Creazione ambiente virtuale:
+```bash
+python -m venv .venv
+```
+
+<br>
+
+Attivazione ambiente virtuale
+
+MacOS/Linux:  
+```bash
+source .venv/bin/activate
+```
+
+Windows:  
+```bash
+.\.venv\Scripts\Activate.ps1
+```
