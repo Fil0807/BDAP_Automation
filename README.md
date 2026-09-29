@@ -29,3 +29,17 @@ Windows:
 ```bash
 .\.venv\Scripts\Activate.ps1
 ```
+
+<br>
+
+Installazione/Aggiornamento dei requisiti:
+```bash
+pip install -r requirements.txt
+```
+
+<br>
+
+Avvio dell'applicazione:
+```bash
+python -m bdap_app
+```
