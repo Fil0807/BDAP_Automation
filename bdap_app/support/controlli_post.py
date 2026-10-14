@@ -12,6 +12,7 @@ from typing import Iterable
 
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import PatternFill
+from .comment_builder import fix_all_comments_in_workbook
 
 
 REPORT_SHEET_NAME = "CONTROLLI-POST"
@@ -305,6 +306,7 @@ def write_controlli_post_sheet(output_path: Path, report: ControlliPostReport) -
                 value="Nessuna criticità o warning segnalati nei file Controlli Post analizzati.",
             )
 
+        fix_all_comments_in_workbook(workbook)
         workbook.save(output_path)
         return True
     finally:

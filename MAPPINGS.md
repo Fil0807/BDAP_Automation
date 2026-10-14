@@ -108,6 +108,11 @@ In questo caso il programma:
 | `residuiattividatatiprecedenti2021_titolo_tre` | C73 | sheet name contains `SEZ. II -DATI RISULT. FINAN` | questionario | display_refs [('TITOLO III','C73')], year cells C69..G69 |
 | `residuiattividatatiprecedenti2021_titolo_quattro` | C74 | sheet name contains `SEZ. II -DATI RISULT. FINAN` | questionario | display_refs [('TITOLO IV','C74')], year cells C69..G69 |
 | `residuipassividatati` | C83 | sheet name contains `SEZ. II -DATI RISULT. FINAN` | questionario | display_refs [('TITOLO I','C83')], year cells C81..G81 |
+| `ufficioavvocatura` | H67 | sheet name contains `SPESA_PERSONALE` | questionario | L’ente dispone di un ufficio di avvocatura |
+| `incarichilegaliesterni` | H73 | sheet name contains `SPESA_PERSONALE` | questionario | L’ente ha affidato incarichi |
+| `residuiattivifcde_titolo_uno` | D19 | 16 | rendiconto | Totale Titolo 1: Entrate correnti di natura tributaria, contributiva e perequativa |
+| `residuiattivifcde_titolo_tre` | D35 | 16 | rendiconto | Totale Titolo 3: Entrate extratributarie |
+
 
 
 ## Chiavi supportate in `bdap_app/support/default_mappings.py`

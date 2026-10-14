@@ -6,7 +6,8 @@ from .text_utils import normalize_text
 
 
 def detect_comune_in_workbook(path: Path) -> Optional[str]:
-    """Rileva il nome del comune in un workbook controllando A7 per 'Denominazione' e restituendo B7.
+    """
+    Rileva il nome del comune in un workbook controllando A7 per 'Denominazione' e restituendo B7.
 
     Restituisce il valore stringa di B7 se A7 contiene un'etichetta come 'Denominazione Ente', altrimenti None.
     """
@@ -25,7 +26,8 @@ def detect_comune_in_workbook(path: Path) -> Optional[str]:
 
 
 def detect_comune_from_path(path: Path) -> Optional[str]:
-    """Dato un percorso file o cartella, rileva e restituisce il nome del comune quando possibile.
+    """
+    Dato un percorso file o cartella, rileva e restituisce il nome del comune quando possibile.
 
     Se `path` è una cartella, ricerca ricorsivamente il primo file .xlsx che contiene l'etichetta.
     """

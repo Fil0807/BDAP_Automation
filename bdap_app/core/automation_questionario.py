@@ -7,6 +7,7 @@ from typing import Optional
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
 from openpyxl.utils.cell import column_index_from_string
+from ..support.comment_builder import create_source_comment
 from ..support.text_utils import (
     normalize_text,
     _coerce_year_value,
@@ -17,6 +18,7 @@ from ..support.value_resolver import (
     find_bdap_value_by_label,
     find_bdap_value_with_fallback,
     find_bdap_value_by_expected_label_near_cell,
+    is_empty_value,
 )
 from ..support.value_formatter import format_value_italian, coerce_numeric
 from ..support.text_utils import _coerce_int_or_default, parse_bool_flag
@@ -32,7 +34,6 @@ QUESTIONARIO_ACTIVE_SPECIAL_KEYS = {
     'spesadelpersonalesostenuta',
     '%riscossionisanzionidelcodicedellastrada',
     '%riscossioniproventidapermessoacostruire',
-    'contrastoallevasionetributaria',
     '%diriscossionecomplessiva',
     'disavanzodariaccertamentostraordinario',
     'controllosullesocietàpartecipate',
@@ -70,6 +71,399 @@ def _resolve_questionario_formula_value(wb_formula, ws_formula, cell_ref: str):
         return None
     ws_data = wb_formula[sheet_name]
     return ws_data.cell(row=row_idx, column=col_idx).value
+
+
+def find_residui_table_header(ws, tipo_tabella: str = "attivi") -> Optional[tuple[int, int]]:
+    """Trova la cella contenente il titolo della sezione Analisi dei residui attivi o passivi.
+
+    La ricerca è case-insensitive e ignora numeri di capitolo variabili (es. '39.', '40.', '44.')
+    e spazi multipli.
+    Restituisce (row, col) o None se non trovata.
+    """
+    keyword = "analisi dei residui passivi" if "passiv" in str(tipo_tabella or "").lower() else "analisi dei residui attivi"
+    keyword_norm = normalize_text(keyword)
+
+    max_row = ws.max_row
+    max_col = min(ws.max_column, 10)
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None:
+                val_norm = normalize_text(val)
+                if keyword_norm in val_norm:
+                    return r, c
+    return None
+
+
+def find_residui_column(ws, table_header_row: int, colonna_target: Optional[object] = "precedenti") -> Optional[int]:
+    """Identifica la colonna target (Anno o Precedenti) esaminando le 2-3 righe successive all'intestazione tabella.
+
+    Per i residui datati (esercizi precedenti), cerca 'precedenti' o 'esercizi precedenti'
+    (default colonna C / 3).
+    Se colonna_target è un anno specifico, cerca il valore numerico dell'anno corrispondente.
+    """
+    target_str = str(colonna_target or "precedenti").strip().lower()
+
+    target_year = None
+    try:
+        y = int(target_str)
+        if 1900 <= y <= 2100:
+            target_year = y
+    except Exception:
+        pass
+
+    start_row = table_header_row + 1
+    end_row = min(ws.max_row, table_header_row + 3)
+    max_col = min(ws.max_column, 25)
+
+    if target_year is not None:
+        for r in range(start_row, end_row + 1):
+            for c in range(1, max_col + 1):
+                val = ws.cell(row=r, column=c).value
+                if val is not None:
+                    if _coerce_year_value(val) == target_year or _coerce_year_value_importocassa(val) == target_year:
+                        return c
+                    if str(target_year) in str(val):
+                        return c
+        return None
+
+    # Scansione dinamica per l'etichetta 'precedenti' / 'esercizi precedenti'
+    for r in range(start_row, end_row + 1):
+        for c in range(1, max_col + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None:
+                txt = str(val).lower()
+                if "precedent" in txt or "es. prec" in txt:
+                    return c
+
+    # Default a colonna C (3) se non trovata esplicitamente nell'header
+    return 3
+
+
+def _normalize_titolo_num(titolo: str) -> Optional[int]:
+    """Estrae il numero del titolo (1..9) da stringhe come 'TITOLO I', 'Titolo 3', 'titolo_uno', ecc."""
+    t = str(titolo or "").strip().lower()
+    word_map = {
+        'uno': 1, 'due': 2, 'tre': 3, 'quattro': 4, 'cinque': 5,
+        'sei': 6, 'sette': 7, 'otto': 8, 'nove': 9
+    }
+    for word, num in word_map.items():
+        if word in t:
+            return num
+
+    m_ar = re.search(r'titolo\s*(\d+)', t)
+    if m_ar:
+        return int(m_ar.group(1))
+
+    roman_map = [
+        ('viii', 8), ('vii', 7), ('iii', 3), ('vi', 6),
+        ('iv', 4), ('ix', 9), ('ii', 2), ('v', 5), ('i', 1),
+    ]
+    for rom, num in roman_map:
+        if re.search(rf'titolo\s*{rom}\b', t) or re.search(rf'titolo{rom}\b', t):
+            return num
+
+    for rom, num in roman_map:
+        if re.search(rf'\b{rom}\b', t):
+            return num
+    m_num = re.search(r'\b(\d+)\b', t)
+    if m_num:
+        return int(m_num.group(1))
+    return None
+
+
+def _cell_matches_titolo(cell_value: object, target_num: int) -> bool:
+    """Verifica se il valore di una cella corrisponde al Titolo richiesto con matching delimitato."""
+    if cell_value is None:
+        return False
+    txt = str(cell_value).strip().lower()
+    if not txt:
+        return False
+
+    clean_txt = re.sub(r'[^a-zA-Z0-9]+', ' ', txt).strip()
+    num_to_roman = {
+        1: 'i', 2: 'ii', 3: 'iii', 4: 'iv', 5: 'v',
+        6: 'vi', 7: 'vii', 8: 'viii', 9: 'ix'
+    }
+    rom = num_to_roman.get(target_num)
+    if not rom:
+        return False
+
+    patterns = [
+        rf'\btitolo\s+{rom}\b',
+        rf'\btitolo\s+{target_num}\b',
+        rf'\btitolo{rom}\b',
+        rf'\btitolo{target_num}\b',
+    ]
+    for pat in patterns:
+        if re.search(pat, clean_txt):
+            return True
+
+    if re.search(rf'\b{target_num}\s+titolo\s+{rom}\b', clean_txt):
+        return True
+
+    return False
+
+
+def find_residui_row(ws, table_header_row: int, titolo: str) -> Optional[int]:
+    """Cerca nella colonna delle descrizioni (colonna B o A) la riga del Titolo richiesto.
+
+    Parte dalla riga successiva all'intestazione tabella e cerca fino a 'totali' o circa 25 righe.
+    """
+    target_num = _normalize_titolo_num(titolo)
+    if target_num is None:
+        return None
+
+    start_row = table_header_row + 1
+    end_row = min(ws.max_row, table_header_row + 25)
+
+    for r in range(start_row, end_row + 1):
+        val_b = ws.cell(row=r, column=2).value
+        val_a = ws.cell(row=r, column=1).value
+
+        if _cell_matches_titolo(val_b, target_num) or _cell_matches_titolo(val_a, target_num):
+            return r
+
+        if r > table_header_row + 3:
+            txt_b = normalize_text(val_b)
+            txt_a = normalize_text(val_a)
+            if txt_b in ("totale", "totali", "totalegenerale") or txt_a in ("totale", "totali", "totalegenerale"):
+                break
+
+    return None
+
+
+def resolve_dynamic_residui_cell(
+    ws,
+    tipo_tabella: str = "attivi",
+    titolo: str = "TITOLO I",
+    colonna_target: Optional[object] = "precedenti",
+) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente la cella (riga, colonna, ref) a matrice (INDICE/CONFRONTA).
+
+    Restituisce (row_idx, col_idx, 'C71') o None.
+    """
+    header = find_residui_table_header(ws, tipo_tabella)
+    if header is None:
+        return None
+    table_header_row, _ = header
+
+    col_idx = find_residui_column(ws, table_header_row, colonna_target)
+    if col_idx is None:
+        return None
+
+    row_idx = find_residui_row(ws, table_header_row, titolo)
+    if row_idx is None:
+        return None
+
+    cell_ref = f"{get_column_letter(col_idx)}{row_idx}"
+    return row_idx, col_idx, cell_ref
+
+
+def resolve_residui_datati_value(
+    ws_data,
+    ws_formula=None,
+    tipo_tabella: str = "attivi",
+    titolo: str = "TITOLO I",
+    colonna_target: Optional[object] = "precedenti",
+    formula_wb=None,
+) -> tuple[Optional[object], Optional[object], Optional[str]]:
+    """Risolve valore raw, numerico e cell_ref tramite matrice dinamica 2D con supporto formula SCARTO."""
+    res = resolve_dynamic_residui_cell(ws_data, tipo_tabella, titolo, colonna_target)
+    if res is None:
+        return None, None, None
+
+    row_idx, col_idx, cell_ref = res
+    val = ws_data.cell(row=row_idx, column=col_idx).value
+    val_num = coerce_numeric(val)
+
+    if val_num in (None, 0) and formula_wb is not None and ws_formula is not None:
+        formula_val = _resolve_questionario_formula_value(formula_wb, ws_formula, cell_ref)
+        formula_num = coerce_numeric(formula_val)
+        if formula_num not in (None, 0):
+            val = formula_val
+            val_num = formula_num
+
+    return val, val_num, cell_ref
+
+
+def _find_residui_datati_row(ws, titolo: str, is_passivi: bool = False) -> Optional[int]:
+    """Trova la riga specifica del Titolo all'interno della tabella Analisi dei residui attivi o passivi."""
+    tipo = "passivi" if is_passivi else "attivi"
+    hdr = find_residui_table_header(ws, tipo)
+    if hdr is not None:
+        r = find_residui_row(ws, hdr[0], titolo)
+        if r is not None:
+            return r
+
+    table_header_keyword = "analisi dei residui passivi" if is_passivi else "analisi dei residui attivi"
+    table_start = None
+    for r in range(1, ws.max_row + 1):
+        txt = str(ws.cell(row=r, column=2).value or "").lower()
+        if table_header_keyword in txt:
+            table_start = r
+            break
+    if table_start is None:
+        return None
+    titolo_norm = normalize_text(titolo)
+    for r in range(table_start + 1, min(ws.max_row + 1, table_start + 15)):
+        txt = normalize_text(str(ws.cell(row=r, column=2).value or ""))
+        if txt == titolo_norm or titolo_norm in txt:
+            return r
+    return None
+
+
+def resolve_dynamic_cassa_vincolata_cell(ws, year: int) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente l'incrocio tra la riga 'di cui cassa vincolata' e la colonna dell'anno target."""
+    target_row = None
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, min(ws.max_column or 5, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                val_clean = val.lower().strip()
+                if "cassa vincolata" in val_clean and "ignorare" not in val_clean:
+                    target_row = r
+                    break
+        if target_row is not None:
+            break
+
+    if target_row is None:
+        return None
+
+    # Cerca la colonna dell'anno nelle righe sopra la riga target (fino a 15 righe sopra)
+    target_col = None
+    start_r = max(1, target_row - 15)
+    for r in range(target_row - 1, start_r - 1, -1):
+        for c in range(1, min(ws.max_column or 25, 25) + 1):
+            cell_val = ws.cell(row=r, column=c).value
+            if _coerce_year_value_importocassa(cell_val) == year or _coerce_year_value(cell_val) == year:
+                target_col = c
+                break
+        if target_col is not None:
+            break
+
+    if target_col is None:
+        return None
+
+    cell_ref = f"{get_column_letter(target_col)}{target_row}"
+    return target_row, target_col, cell_ref
+
+
+def resolve_dynamic_sanzioni_cds_cell(ws, year: int) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente la cella per la percentuale riscossioni sanzioni codice della strada."""
+    section_row = None
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, min(ws.max_column or 5, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                v_clean = val.lower().strip()
+                if "sanzioni" in v_clean and ("strada" in v_clean or "cds" in v_clean or "violazioni" in v_clean):
+                    section_row = r
+                    break
+        if section_row is not None:
+            break
+
+    if section_row is None:
+        return None
+
+    perc_row = None
+    for r in range(section_row, min(ws.max_row + 1, section_row + 15)):
+        for c in range(1, min(ws.max_column or 5, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                v_clean = val.lower().strip()
+                if "percentuale" in v_clean and "riscossione" in v_clean:
+                    perc_row = r
+                    break
+        if perc_row is not None:
+            break
+
+    if perc_row is None:
+        return None
+
+    year_col = None
+    start_r = max(1, section_row - 25)
+    for r in range(section_row, start_r - 1, -1):
+        for c in range(1, min(ws.max_column or 25, 25) + 1):
+            cell_val = ws.cell(row=r, column=c).value
+            if _coerce_year_value(cell_val) == year:
+                year_col = c
+                break
+        if year_col is not None:
+            break
+
+    if year_col is None:
+        return None
+
+    cell_ref = f"{get_column_letter(year_col)}{perc_row}"
+    return perc_row, year_col, cell_ref
+
+
+def resolve_dynamic_debito_mutui_cell(ws, year: int) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente la cella per contrazionenuovimutui (Debito complessivo contratto)."""
+    target_row = None
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, min(ws.max_column or 5, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                v_clean = normalize_text(val)
+                if "debitocomplessivocontratto" in v_clean or ("debito" in v_clean and "contratto" in v_clean):
+                    target_row = r
+                    break
+        if target_row is not None:
+            break
+
+    if target_row is None:
+        return None
+
+    target_col = None
+    start_r = max(1, target_row - 10)
+    for r in range(target_row, start_r - 1, -1):
+        for c in range(1, min(ws.max_column or 25, 25) + 1):
+            cell_val = ws.cell(row=r, column=c).value
+            if _coerce_year_value(cell_val) == year:
+                target_col = c
+                break
+        if target_col is not None:
+            break
+
+    if target_col is None:
+        target_col = 5  # default colonna E
+
+    cell_ref = f"{get_column_letter(target_col)}{target_row}"
+    return target_row, target_col, cell_ref
+
+
+def resolve_dynamic_spesa_personale_question_cell(ws, keyword: str) -> Optional[tuple[int, int, str]]:
+    """Trova la cella di risposta Si/No per una domanda nel foglio spesa del personale."""
+    key_norm = normalize_text(keyword)
+    target_row = None
+    label_col = None
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, min(ws.max_column or 5, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                v_norm = normalize_text(val)
+                matched = ("incarichi" in v_norm and "legali" in v_norm) if "legali" in keyword.lower() else (key_norm in v_norm)
+                if matched:
+                    target_row = r
+                    label_col = c
+                    break
+        if target_row is not None:
+            break
+
+    if target_row is None:
+        return None
+
+    ans_col = 8
+    for c in range(label_col + 1, min(ws.max_column or 15, 15) + 1):
+        val = ws.cell(row=target_row, column=c).value
+        if isinstance(val, str) and val.strip().lower() in ("si", "sì", "no", "true", "false"):
+            ans_col = c
+            break
+
+    cell_ref = f"{get_column_letter(ans_col)}{target_row}"
+    return target_row, ans_col, cell_ref
 
 
 def _clear_questionario_manual_cell(target_cell) -> None:
@@ -609,56 +1003,88 @@ def process_questionario_row(
             year_aborted = False
             source_sheet_title = ws_bdap_src.title if ws_bdap_src is not None else None
 
-            if base_row is not None and ws_bdap_src is not None:
-                target_row = base_row
-                found_title_row = find_nearby_title_row(
-                    ws_bdap_src,
-                    str(title),
-                    base_row,
-                    base_col,
-                    row_tolerance=row_tol,
+            if ws_bdap_src is not None:
+                # 1. Tentativo di risoluzione dinamica 2D a matrice (INDICE/CONFRONTA)
+                is_residui_datati = (
+                    "tipo_tabella" in data_source_mapping
+                    or "colonna_target" in data_source_mapping
+                    or any(k in str(special_key or "").lower() for k in ("residuiattividatati", "residuipassividatati", "eserciziprecedenti"))
                 )
-                if found_title_row is not None:
-                    target_row = found_title_row
+                if is_residui_datati:
+                    tipo_tab = data_source_mapping.get("tipo_tabella")
+                    if not tipo_tab:
+                        tipo_tab = "passivi" if "passiv" in str(special_key or "").lower() else "attivi"
+                    target_tit = data_source_mapping.get("titolo") or str(title)
+                    target_col_spec = data_source_mapping.get("colonna_target", "precedenti")
+                    dyn_res = resolve_dynamic_residui_cell(
+                        ws_bdap_src,
+                        tipo_tabella=tipo_tab,
+                        titolo=target_tit,
+                        colonna_target=target_col_spec,
+                    )
+                    if dyn_res is not None:
+                        dyn_row, dyn_col, dyn_cell_ref = dyn_res
+                        candidate = ws_bdap_src.cell(row=dyn_row, column=dyn_col).value
+                        candidate_ref = dyn_cell_ref
 
-                y_col = None
-                if not use_static_refs and "year_cell_ref" in data_source_mapping:
-                    refs = data_source_mapping["year_cell_ref"]
-                    if isinstance(refs, (list, tuple)):
-                        for yref in refs:
+                # 2. Fallback alla risoluzione posizionale legacy se la ricerca dinamica non ha individuato la cella
+                if candidate_ref is None and base_row is not None:
+                    target_row = base_row
+                    is_esercizi_prec = "eserciziprecedenti" in str(special_key or "").lower()
+                    is_passivi = "passiv" in str(special_key or "").lower()
+                    r_datati = _find_residui_datati_row(ws_bdap_src, str(title), is_passivi=is_passivi) if is_esercizi_prec else None
+                    if r_datati is not None:
+                        target_row = r_datati
+                        base_col = 3  # Colonna C = Esercizi Precedenti
+                    else:
+                        found_title_row = find_nearby_title_row(
+                            ws_bdap_src,
+                            str(title),
+                            base_row,
+                            base_col,
+                            row_tolerance=row_tol,
+                        )
+                        if found_title_row is not None:
+                            target_row = found_title_row
+
+                    y_col = None
+                    if not use_static_refs and "year_cell_ref" in data_source_mapping:
+                        refs = data_source_mapping["year_cell_ref"]
+                        if isinstance(refs, (list, tuple)):
+                            for yref in refs:
+                                try:
+                                    y_row, y_col_idx = coordinate_to_tuple(yref)
+                                    val = ws_bdap_src.cell(row=y_row, column=y_col_idx).value
+                                    if _coerce_year_value(val) == year:
+                                        y_col = y_col_idx
+                                        break
+                                except Exception:
+                                    continue
+                        else:
                             try:
-                                y_row, y_col_idx = coordinate_to_tuple(yref)
+                                y_row, y_col_idx = coordinate_to_tuple(refs)
                                 val = ws_bdap_src.cell(row=y_row, column=y_col_idx).value
                                 if _coerce_year_value(val) == year:
                                     y_col = y_col_idx
-                                    break
                             except Exception:
-                                continue
-                    else:
+                                y_col = None
+
+                    if not use_static_refs and y_col is None:
+                        # try resolving by scanning nearby header rows
                         try:
-                            y_row, y_col_idx = coordinate_to_tuple(refs)
-                            val = ws_bdap_src.cell(row=y_row, column=y_col_idx).value
-                            if _coerce_year_value(val) == year:
-                                y_col = y_col_idx
+                            y_col = _resolve_questionario_year_column(ws_bdap_src, year, target_row, start_col=4)
                         except Exception:
                             y_col = None
 
-                if not use_static_refs and y_col is None:
-                    # try resolving by scanning nearby header rows
-                    try:
-                        y_col = _resolve_questionario_year_column(ws_bdap_src, year, target_row, start_col=4)
-                    except Exception:
-                        y_col = None
-
-                if y_col is not None:
-                    year_cell = ws_bdap_src.cell(row=target_row, column=y_col)
-                    candidate = year_cell.value
-                    candidate_ref = year_cell.coordinate
-                else:
-                    # Legge il riferimento statico quando la mappatura lo richiede
-                    # oppure quando non è stata risolta una colonna anno.
-                    actual_ref = f"{get_column_letter(base_col)}{target_row}" if base_col else cell_ref
-                    candidate, candidate_ref = find_bdap_value_with_fallback(ws_bdap_src, actual_ref, max_offset=0)
+                    if y_col is not None:
+                        year_cell = ws_bdap_src.cell(row=target_row, column=y_col)
+                        candidate = year_cell.value
+                        candidate_ref = year_cell.coordinate
+                    else:
+                        # Legge il riferimento statico quando la mappatura lo richiede
+                        # oppure quando non è stata risolta una colonna anno.
+                        actual_ref = f"{get_column_letter(base_col)}{target_row}" if base_col else cell_ref
+                        candidate, candidate_ref = find_bdap_value_with_fallback(ws_bdap_src, actual_ref, max_offset=0)
 
             candidate_num = coerce_numeric(candidate)
             if candidate_num in (None, 0) and questionario_formula_wb is not None:
@@ -723,14 +1149,25 @@ def process_questionario_row(
         if keep_source_reference and bdap_path is not None:
             if source_descriptions:
                 src_descr = " | ".join(source_descriptions)
+                target_cell.comment = create_source_comment(
+                    source_file_name=source_file_name,
+                    source_descr=src_descr,
+                    sheet_name=ws_bdap_src.title if ws_bdap_src is not None else None,
+                    header="QUESTIONARIO BILANCIO",
+                )
             else:
                 source_refs = last_refs if last_refs else [cell_ref for _, cell_ref in display_refs]
                 source_sheet = ws_bdap_src.title if ws_bdap_src is not None else "n/d"
-                src_descr = f"foglio {source_sheet} | " + " | ".join(
+                detail_parts = [
                     f"{title}: cella {source_ref}"
                     for (title, _), source_ref in zip(display_refs, source_refs)
+                ]
+                target_cell.comment = create_source_comment(
+                    source_file_name=source_file_name,
+                    sheet_name=source_sheet,
+                    detail=" | ".join(detail_parts),
+                    header="QUESTIONARIO BILANCIO",
                 )
-            target_cell.comment = Comment(f"Fonte BDAP: {source_file_name} | {src_descr}", "BDAP Automation")
         return True, 1, wb_questionario, questionario_formula_wb, questionario_path_cache, None
 
     elif "cell_refs" in data_source_mapping and "cell_ref" not in data_source_mapping:
@@ -782,8 +1219,52 @@ def process_questionario_row(
         if isinstance(fallback_refs, str):
             fallback_refs = [fallback_refs]
         candidate_base_refs = [actual_base_ref] + [ref for ref in fallback_refs if ref]
+        is_unanswered = False
 
-        if "year_cell_ref" in data_source_mapping:
+        dyn_res = None
+        if "tipo_tabella" in data_source_mapping and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_residui_cell(
+                ws_bdap_src,
+                tipo_tabella=data_source_mapping["tipo_tabella"],
+                titolo=data_source_mapping.get("titolo", "TITOLO I"),
+                colonna_target=data_source_mapping.get("colonna_target", "precedenti"),
+            )
+        elif special_key == "importocassavincolata" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_cassa_vincolata_cell(ws_bdap_src, year)
+        elif special_key == "%riscossionisanzionidelcodicedellastrada" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_sanzioni_cds_cell(ws_bdap_src, year)
+        elif special_key == "contrazionenuovimutui" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_debito_mutui_cell(ws_bdap_src, year)
+        elif special_key in ("ufficioavvocatura", "incarichilegaliesterni", "ufficioavvocaturaavvocatura") and ws_bdap_src is not None:
+            kw = "avvocatura" if "avvocatura" in str(special_key) else "incarichilegali"
+            dyn_res = resolve_dynamic_spesa_personale_question_cell(ws_bdap_src, kw)
+
+        if dyn_res is not None:
+            actual_base_ref = dyn_res[2]
+            candidate_base_refs = [actual_base_ref]
+            row_idx, col_idx, _ = dyn_res
+            val_direct = ws_bdap_src.cell(row=row_idx, column=col_idx).value
+
+            is_unanswered = False
+            if special_key in ("ufficioavvocatura", "incarichilegaliesterni", "ufficioavvocaturaavvocatura") and questionario_formula_wb is not None:
+                try:
+                    if ws_bdap_src.title in questionario_formula_wb.sheetnames:
+                        ws_f = questionario_formula_wb[ws_bdap_src.title]
+                        raw_cell = ws_f[actual_base_ref]
+                        if getattr(raw_cell, "data_type", None) == "f" or str(raw_cell.value or "").startswith("="):
+                            f_res = _resolve_questionario_formula_value(questionario_formula_wb, ws_f, actual_base_ref)
+                            if f_res is None or str(f_res).strip() == "":
+                                is_unanswered = True
+                except Exception:
+                    pass
+
+            if is_unanswered:
+                value = None
+            elif not is_empty_value(val_direct):
+                value = val_direct
+                actual_cell_ref = actual_base_ref
+
+        elif "year_cell_ref" in data_source_mapping or "table_refs" in data_source_mapping:
             selected_ref = None
             for table_cell_ref, table_year_ref in _questionario_table_refs(data_source_mapping):
                 try:
@@ -793,13 +1274,18 @@ def process_questionario_row(
 
                 expected_label = data_source_mapping.get("expected_label")
                 if expected_label:
-                    found_label_row = find_nearby_title_row(
-                        ws_bdap_src,
-                        str(expected_label),
-                        v_row,
-                        v_col,
-                        row_tolerance=row_tol,
-                    )
+                    labels = expected_label if isinstance(expected_label, (list, tuple)) else [expected_label]
+                    found_label_row = None
+                    for lbl in labels:
+                        found_label_row = find_nearby_title_row(
+                            ws_bdap_src,
+                            str(lbl),
+                            v_row,
+                            v_col,
+                            row_tolerance=row_tol,
+                        )
+                        if found_label_row is not None:
+                            break
                     if found_label_row is None:
                         continue
                     v_row = found_label_row
@@ -837,10 +1323,11 @@ def process_questionario_row(
                     return True, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
                 return False, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
 
-        for base_ref in candidate_base_refs:
-            value, actual_cell_ref = find_bdap_value_with_fallback(ws_bdap_src, base_ref, max_offset=row_tol)
-            if value is not None:
-                break
+        if value is None and not is_unanswered:
+            for base_ref in candidate_base_refs:
+                value, actual_cell_ref = find_bdap_value_with_fallback(ws_bdap_src, base_ref, max_offset=row_tol)
+                if value is not None:
+                    break
 
             # Fallback per "contrazionenuovimutui"
             if special_key == "contrazionenuovimutui" and value is not None:
@@ -878,15 +1365,16 @@ def process_questionario_row(
             formula_candidates = []
             if isinstance(actual_cell_ref, str) and actual_cell_ref:
                 formula_candidates.append(actual_cell_ref)
-            primary_ref = data_source_mapping.get("cell_ref")
-            if isinstance(primary_ref, str) and primary_ref:
-                formula_candidates.append(primary_ref)
-            fallback_refs = data_source_mapping.get("fallback_cell_refs", [])
-            if isinstance(fallback_refs, str):
-                fallback_refs = [fallback_refs]
-            for ref in fallback_refs:
-                if isinstance(ref, str) and ref:
-                    formula_candidates.append(ref)
+            else:
+                primary_ref = data_source_mapping.get("cell_ref")
+                if isinstance(primary_ref, str) and primary_ref:
+                    formula_candidates.append(primary_ref)
+                fallback_refs = data_source_mapping.get("fallback_cell_refs", [])
+                if isinstance(fallback_refs, str):
+                    fallback_refs = [fallback_refs]
+                for ref in fallback_refs:
+                    if isinstance(ref, str) and ref:
+                        formula_candidates.append(ref)
 
             ws_formula_src = None
             if ws_bdap_src is not None and ws_bdap_src.title in questionario_formula_wb.sheetnames:
@@ -904,20 +1392,30 @@ def process_questionario_row(
                         break
 
     if value is None:
-        if data_source_mapping.get("optional", False):
+        if "default_if_missing" in data_source_mapping:
+            value = data_source_mapping["default_if_missing"]
+            actual_cell_ref = "DEFAULT_IF_MISSING"
+        elif data_source_mapping.get("optional", False):
             target_cell.value = None
             target_cell.comment = None
-            return False, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
-        raise KeyError(f"No value found for label {data_source_mapping.get('label')}")
+            return True, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
+        else:
+            raise KeyError(f"No value found for label {data_source_mapping.get('label') or special_key}")
 
     percent_flag = bool(data_source_mapping.get('is_percentage', False))
-    formatted_value = format_value_italian(value, percent=percent_flag)
+    yes_no_flag = bool(data_source_mapping.get('is_boolean_yes_no', False))
+    if data_source_mapping.get('divide_by_100', False) and coerce_numeric(value) is not None:
+        value = Decimal(str(coerce_numeric(value))) / Decimal("100")
+    formatted_value = format_value_italian(value, percent=percent_flag, boolean_yes_no=yes_no_flag)
     target_cell.value = formatted_value
     if keep_source_reference and bdap_path is not None:
-        src_descr = f"foglio {ws_bdap_src.title} | cella {actual_cell_ref}"
-        if "label" in data_source_mapping:
-            src_descr += f" | voce {data_source_mapping['label']}"
-        target_cell.comment = Comment(f"Fonte BDAP: {source_file_name} | {src_descr}", "BDAP Automation")
+        target_cell.comment = create_source_comment(
+            source_file_name=source_file_name,
+            sheet_name=ws_bdap_src.title,
+            cell_ref=actual_cell_ref,
+            label=data_source_mapping.get("label"),
+            header="QUESTIONARIO BILANCIO",
+        )
 
     numeric_value = coerce_numeric(value)
     resolved_numeric = None

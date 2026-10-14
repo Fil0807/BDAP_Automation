@@ -7,9 +7,12 @@ from typing import Optional
 from openpyxl import load_workbook
 from openpyxl.comments import Comment
 
-from ..support.text_utils import _coerce_year_value, normalize_text
-from ..support.value_formatter import format_value_italian
+from decimal import Decimal
+from ..support.comment_builder import create_source_comment
+from ..support.text_utils import _coerce_int_or_default, _coerce_year_value, normalize_text
+from ..support.value_formatter import coerce_numeric, format_value_italian
 from ..support.value_resolver import (
+    find_bdap_value_by_expected_label_near_cell,
     find_bdap_value_by_label,
     find_bdap_value_with_fallback,
     format_source_location,
@@ -148,13 +151,31 @@ def process_indicatori_row(
 
     value = None
     actual_ref = None
+    row_tol = max(0, _coerce_int_or_default(data_source_mapping.get("row_tolerance", 2), 2))
+    expected_label = data_source_mapping.get("expected_label")
+
     if "cell_ref" in data_source_mapping:
-        value, actual_ref = find_bdap_value_with_fallback(ws_src, data_source_mapping["cell_ref"], max_offset=1)
+        cell_ref = data_source_mapping["cell_ref"]
+        if expected_label:
+            labels = expected_label if isinstance(expected_label, (list, tuple)) else [expected_label]
+            for lbl in labels:
+                value, actual_ref = find_bdap_value_by_expected_label_near_cell(
+                    ws_src,
+                    cell_ref,
+                    expected_label=str(lbl),
+                    max_row_offset=row_tol,
+                    label_check_cells=data_source_mapping.get("label_check_cells"),
+                    strict_expected_label=bool(data_source_mapping.get("strict_expected_label", False)),
+                )
+                if value is not None:
+                    break
+        if value is None:
+            value, actual_ref = find_bdap_value_with_fallback(ws_src, cell_ref, max_offset=row_tol)
     elif "label" in data_source_mapping:
         value, actual_ref = find_bdap_value_by_label(ws_src, data_source_mapping["label"])
     elif "cell_refs" in data_source_mapping:
         for cell_ref in data_source_mapping.get("cell_refs", []):
-            value, actual_ref = find_bdap_value_with_fallback(ws_src, cell_ref, max_offset=1)
+            value, actual_ref = find_bdap_value_with_fallback(ws_src, cell_ref, max_offset=row_tol)
             if value is not None:
                 break
 
@@ -165,12 +186,33 @@ def process_indicatori_row(
             return False, 0, wb_indicatori, None, path, None
         raise KeyError("No value found in indicatori source")
 
-    formatted = format_value_italian(value, percent=bool(data_source_mapping.get("is_percentage", False)))
-    target_cell.value = formatted
+    if data_source_mapping.get("as_decimal_ratio") or special_key in (
+        "incidenzaspesapersonalesuspesacorrente",
+        "incidenzaspesapersonalesuspesacorrente40vindicatore41",
+        "incidenzaspesapersonalesuspesacorrente40",
+    ):
+        num = coerce_numeric(value)
+        if num is not None:
+            if abs(num) > 1:
+                target_cell.value = float(round(num / Decimal("100"), 4))
+            else:
+                target_cell.value = float(round(num, 4))
+        else:
+            target_cell.value = value
+    else:
+        formatted = format_value_italian(
+            value,
+            percent=bool(data_source_mapping.get("is_percentage", False)),
+            boolean_yes_no=bool(data_source_mapping.get("is_boolean_yes_no", False)),
+        )
+        target_cell.value = formatted
     if keep_source_reference:
         source_file_name = path.name if path is not None else (bdap_path.name if bdap_path is not None else "n/d")
-        target_cell.comment = Comment(
-            f"Fonte indicatori: {source_file_name} | {format_source_location(ws_src.title, actual_ref)}",
-            "BDAP Automation",
+        target_cell.comment = create_source_comment(
+            source_file_name=source_file_name,
+            sheet_name=ws_src.title,
+            cell_ref=actual_ref,
+            label=data_source_mapping.get("label") or special_key,
+            header="INDICATORI SINTETICI",
         )
     return True, 1, wb_indicatori, None, path, value

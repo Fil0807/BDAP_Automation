@@ -13,6 +13,7 @@ from typing import Callable, Iterable, Optional
 import openpyxl
 from openpyxl.workbook import Workbook
 
+from .comment_builder import fix_all_comments_in_workbook
 from .text_utils import normalize_text
 
 LOWERCASE_WORDS = {
@@ -145,96 +146,142 @@ def parse_italian_int(val_str: str) -> Optional[int]:
         return None
 
 
-def extract_population_from_pdf(pdf_path: Path, target_year: Optional[int] = None) -> Optional[int]:
-    """Estrae il numero di abitanti da un documento PDF (relazione revisori, pareri, ecc.)."""
+def _extract_text_from_pdf(pdf_path: Path) -> list[str]:
+    """Estrae le pagine di testo da un PDF usando pymupdf o pypdf in fallback."""
+    pages_text: list[str] = []
     try:
         import pymupdf  # type: ignore
-    except ImportError:
-        return None
+        doc = pymupdf.open(pdf_path)
+        try:
+            for page in doc:
+                t = page.get_text()
+                if t:
+                    pages_text.append(t)
+        finally:
+            doc.close()
+        if pages_text:
+            return pages_text
+    except Exception:
+        pass
 
     try:
-        doc = pymupdf.open(pdf_path)
+        import pypdf  # type: ignore
+        reader = pypdf.PdfReader(str(pdf_path))
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                pages_text.append(t)
     except Exception:
-        return None
+        pass
+
+    return pages_text
+
+
+def extract_population_records_from_pdf(pdf_path: Path) -> list[tuple[Optional[int], int]]:
+    """Estrae tutte le coppie (anno, abitanti) trovate nel documento PDF."""
+    pages_text = _extract_text_from_pdf(pdf_path)
+    if not pages_text:
+        return []
+
+    file_year = None
+    m_yr = re.search(r"\b(20\d\d)\b", pdf_path.name)
+    if m_yr:
+        file_year = int(m_yr.group(1))
 
     # Pattern tipici dei verbali/relazioni della Corte dei Conti e Revisori:
-    # 1. Popolazione al 01.01.YYYY ... di n. X abitanti
-    pattern_year = re.compile(
-        r"popolazione\s+al\s+0?1\.0?1\.(\d{4})[^\n\r]*?di\s+n\.?\s*([0-9\.\,]+)\s+abitanti",
+    pattern_year_1 = re.compile(
+        r"popolazione\s+al\s+0?1[\.\-\/]0?1[\.\-\/](\d{4})[^\n\r]*?di\s+n\.?\s*([0-9\.\,]+)\s+abitanti",
         re.IGNORECASE,
     )
-    # 2. Popolazione ... di n. X abitanti
+    pattern_year_2 = re.compile(
+        r"abitanti\s+([0-9\.\,]+)[^\n\r]*?al\s+0?1[\.\-\/]0?1[\.\-\/](\d{4})",
+        re.IGNORECASE,
+    )
+    pattern_year_3 = re.compile(
+        r"comune\s+di\s+([0-9\.\,]+)\s+abitanti\s+al\s+0?1[\.\-\/]0?1[\.\-\/](\d{4})",
+        re.IGNORECASE,
+    )
     pattern_generic = re.compile(
         r"popolazione[^\n\r]*?di\s+n\.?\s*([0-9\.\,]+)\s+abitanti",
         re.IGNORECASE,
     )
-    # 3. Un comune di X abitanti
     pattern_comune_di = re.compile(
         r"comune\s+di\s+([0-9\.\,]+)\s+abitanti",
         re.IGNORECASE,
     )
-    # 4. Abitanti X, dati Istat
     pattern_abitanti = re.compile(
         r"abitanti\s+([0-9\.\,]+)",
         re.IGNORECASE,
     )
 
-    exact_matches: list[tuple[int, int]] = []
-    generic_matches: list[int] = []
+    records: list[tuple[Optional[int], int]] = []
 
-    try:
-        for page in doc:
-            text = page.get_text()
-            if not text:
-                continue
+    for text in pages_text:
+        for m in pattern_year_1.finditer(text):
+            yr = int(m.group(1))
+            val = parse_italian_int(m.group(2))
+            if val is not None and 10 <= val <= 5_000_000:
+                records.append((yr, val))
 
-            for m in pattern_year.finditer(text):
-                yr = int(m.group(1))
-                val = parse_italian_int(m.group(2))
-                if val is not None and 10 <= val <= 5_000_000:
-                    if target_year is not None and yr == target_year:
-                        exact_matches.append((yr, val))
-                    else:
-                        exact_matches.append((yr, val))
+        for m in pattern_year_2.finditer(text):
+            val = parse_italian_int(m.group(1))
+            yr = int(m.group(2))
+            if val is not None and 10 <= val <= 5_000_000:
+                records.append((yr, val))
 
-            for m in pattern_generic.finditer(text):
-                val = parse_italian_int(m.group(1))
-                if val is not None and 10 <= val <= 5_000_000:
-                    generic_matches.append(val)
+        for m in pattern_year_3.finditer(text):
+            val = parse_italian_int(m.group(1))
+            yr = int(m.group(2))
+            if val is not None and 10 <= val <= 5_000_000:
+                records.append((yr, val))
 
-            for m in pattern_comune_di.finditer(text):
-                val = parse_italian_int(m.group(1))
-                if val is not None and 10 <= val <= 5_000_000:
-                    generic_matches.append(val)
+        for m in pattern_generic.finditer(text):
+            val = parse_italian_int(m.group(1))
+            if val is not None and 10 <= val <= 5_000_000:
+                records.append((file_year, val))
 
-            for m in pattern_abitanti.finditer(text):
-                val = parse_italian_int(m.group(1))
-                if val is not None and 10 <= val <= 5_000_000:
-                    generic_matches.append(val)
-    finally:
-        doc.close()
+        for m in pattern_comune_di.finditer(text):
+            val = parse_italian_int(m.group(1))
+            if val is not None and 10 <= val <= 5_000_000:
+                records.append((file_year, val))
+
+        for m in pattern_abitanti.finditer(text):
+            val = parse_italian_int(m.group(1))
+            if val is not None and 10 <= val <= 5_000_000:
+                records.append((file_year, val))
+
+    return records
+
+
+def extract_population_from_pdf(pdf_path: Path, target_year: Optional[int] = None) -> Optional[int]:
+    """Estrae il numero di abitanti da un documento PDF (relazione revisori, pareri, ecc.)."""
+    records = extract_population_records_from_pdf(pdf_path)
+    if not records:
+        return None
 
     if target_year is not None:
-        target_hits = [val for yr, val in exact_matches if yr == target_year]
+        target_hits = [val for yr, val in records if yr == target_year]
         if target_hits:
             return target_hits[0]
 
-    if exact_matches:
-        # Se non c'è match esatto con l'anno target, prendi l'anno più recente disponibile
-        exact_matches.sort(key=lambda item: item[0], reverse=True)
-        return exact_matches[0][1]
+    records_with_year = [r for r in records if r[0] is not None]
+    if records_with_year:
+        records_with_year.sort(key=lambda r: r[0], reverse=True)
+        return records_with_year[0][1]
 
-    if generic_matches:
-        return generic_matches[0]
-
-    return None
+    return records[0][1]
 
 
 def detect_population(
     search_dirs: Iterable[Path],
     target_year: Optional[int] = None,
-) -> Optional[int]:
-    """Cerca il numero di abitanti per l'anno target nelle cartelle del comune."""
+    format_with_year: bool = True,
+) -> Optional[str | int]:
+    """Cerca il numero di abitanti nelle cartelle del comune riportando l'ultimo anno disponibile.
+
+    Esempio output:
+        '10839 (2022)' oppure '656 (2024)'
+    """
     pdf_files: list[Path] = []
     seen_paths: set[Path] = set()
 
@@ -250,39 +297,48 @@ def detect_population(
                 if any(kw in p_lower for kw in keywords):
                     pdf_files.append(p)
 
-    if target_year:
-        # Ordina privilegiando i file dell'anno target (es. '2024') e le relazioni revisori
-        def sort_key(path: Path) -> tuple[bool, bool, str]:
-            name = path.name.lower()
-            has_year = str(target_year) in name
-            has_revisore = "revisore" in name or "parere" in name
-            return (has_year, has_revisore, name)
-
-        pdf_files.sort(key=sort_key, reverse=True)
-
-    # 1. Prima scansione: cerca match per target_year
-    for p in pdf_files:
-        val = extract_population_from_pdf(p, target_year=target_year)
-        if val is not None:
-            return val
-
-    # 2. Se non trovato nei PDF specifici, controlla eventuali altri PDF nella cartella
     for sdir in search_dirs:
         if not sdir or not sdir.exists():
             continue
         for p in sdir.glob("*.pdf"):
             if p not in seen_paths:
-                val = extract_population_from_pdf(p, target_year=target_year)
-                if val is not None:
-                    return val
+                seen_paths.add(p)
+                pdf_files.append(p)
 
-    return None
+    all_records: list[tuple[Optional[int], int]] = []
+    for p in pdf_files:
+        records = extract_population_records_from_pdf(p)
+        all_records.extend(records)
+
+    if not all_records:
+        return None
+
+    # Se c'è target_year, controlla se abbiamo un match per target_year
+    if target_year is not None:
+        target_hits = [r for r in all_records if r[0] == target_year]
+        if target_hits:
+            best_year, best_val = target_hits[0]
+            if format_with_year:
+                return f"{best_val} ({best_year})"
+            return best_val
+
+    # Altrimenti prendi il record con l'anno più recente disponibile
+    records_with_year = [r for r in all_records if r[0] is not None]
+    if records_with_year:
+        records_with_year.sort(key=lambda r: r[0], reverse=True)
+        best_year, best_val = records_with_year[0]
+        if format_with_year:
+            return f"{best_val} ({best_year})"
+        return best_val
+
+    best_val = all_records[0][1]
+    return f"{best_val}" if format_with_year else best_val
 
 
 def write_conclusioni_sheet(
     workbook_path: Path,
     comune_name: Optional[str] = None,
-    population: Optional[int] = None,
+    population: Optional[int | str] = None,
     log: Optional[Callable[[str], None]] = None,
 ) -> bool:
     """Compila le celle C2 (comune) e C3 (abitanti) nel foglio CONCLUSIONI del template finale."""
@@ -316,8 +372,12 @@ def write_conclusioni_sheet(
         # Cella C3: Abitanti dell'ultimo anno analizzato
         c3_cell = ws["C3"]
         if population is not None:
-            c3_cell.value = int(population)
-            c3_cell.number_format = "#,##0"
+            if isinstance(population, (int, float)):
+                c3_cell.value = int(population)
+                c3_cell.number_format = "#,##0"
+            else:
+                c3_cell.value = str(population).strip()
+                c3_cell.number_format = "General"
             updated_items.append(f"Abitanti (C3) = {c3_cell.value}")
         else:
             # Se la cella conteneva il testo segnaposto del template, puliscila
@@ -326,6 +386,7 @@ def write_conclusioni_sheet(
                 c3_cell.value = None
                 updated_items.append("Abitanti (C3) = [non disponibile, segnaposto rimosso]")
 
+        fix_all_comments_in_workbook(wb)
         wb.save(workbook_path)
         if updated_items:
             emit(f"Foglio CONCLUSIONI aggiornato con successo: {', '.join(updated_items)}.")

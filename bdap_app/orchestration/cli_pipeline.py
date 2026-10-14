@@ -8,6 +8,7 @@ from typing import Callable, Optional
 from openpyxl import load_workbook
 
 from ..core.automation_fcde import populate_fcde_sheet
+from ..core.automation_piano_indicatori import populate_piano_indicatori_sheet
 from ..core.automation import fill_accounting_analysis
 from ..core.automation_search import find_sheet, find_year_column
 from ..support.controlli_post import (
@@ -20,6 +21,7 @@ from ..support.conclusioni import (
     detect_population,
     write_conclusioni_sheet,
 )
+from ..support.comment_builder import fix_all_comments_in_workbook
 from ..support.text_utils import _coerce_year_value
 from .cli_discovery import (
     discover_bdap_files_by_year,
@@ -260,6 +262,7 @@ def run_pipeline(
 
         if bdap_file is not None:
             populate_fcde_sheet(args.output, bdap_file, year, log=log)
+            populate_piano_indicatori_sheet(args.output, bdap_file, year, log=log)
 
         # In modalità "tutti i fogli", ogni foglio viene trattato come un passaggio di compilazione indipendente.
         for sheet_name in sheets_to_process:
@@ -350,6 +353,7 @@ def run_pipeline(
                             target_cell.comment = source_cell.comment
             finally:
                 rescue_wb.close()
+                fix_all_comments_in_workbook(master_wb)
                 master_wb.save(args.output)
                 master_wb.close()
                 try:

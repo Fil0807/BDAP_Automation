@@ -4,14 +4,28 @@ from decimal import Decimal
 from typing import Optional
 
 
-def format_value_italian(value, percent: bool = False):
+def format_value_italian(value, percent: bool = False, boolean_yes_no: bool = False):
     """Formatta valori numerici secondo la convenzione italiana (virgola per decimali, punto per migliaia).
 
     Se `percent` è True, tratta i valori piccoli (<=1) come percentuali (es. 0.12 diventa 12%).
+    Se `boolean_yes_no` è True, restituisce 'Sì' o 'No' (es. 1 -> 'Sì', 0 -> 'No').
     """
     if value is None:
         return None
-    
+
+    if boolean_yes_no:
+        if isinstance(value, bool):
+            return "Sì" if value else "No"
+        num = coerce_numeric(value)
+        if num is not None:
+            return "Sì" if num > 0 else "No"
+        s_val = str(value).strip().lower()
+        if s_val in ("1", "1.0", "si", "sì", "yes", "true", "s", "t"):
+            return "Sì"
+        if s_val in ("0", "0.0", "no", "false", "n", "f"):
+            return "No"
+        return str(value).strip()
+
     string_had_percent = False
     if isinstance(value, bool):
         return value

@@ -2,10 +2,13 @@
 
 from .automation import fill_accounting_analysis
 from .automation_fcde import populate_fcde_sheet, populate_fcde_sheet_in_workbook, read_fcde_percentage_from_workbook
+from .automation_piano_indicatori import populate_piano_indicatori_sheet, populate_piano_indicatori_sheet_in_workbook
 
 __all__ = [
 	"fill_accounting_analysis",
 	"populate_fcde_sheet",
 	"populate_fcde_sheet_in_workbook",
 	"read_fcde_percentage_from_workbook",
+	"populate_piano_indicatori_sheet",
+	"populate_piano_indicatori_sheet_in_workbook",
 ]

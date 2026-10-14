@@ -8,6 +8,7 @@ from openpyxl import load_workbook
 from openpyxl.comments import Comment
 from openpyxl.utils.cell import coordinate_to_tuple
 
+from ..support.comment_builder import create_source_comment
 from ..support.text_utils import _coerce_int_or_default, label_match_score, normalize_text, text_options
 from ..support.value_resolver import format_source_location, is_empty_value
 
@@ -76,19 +77,18 @@ def _discover_questionario_debiti_workbook(bdap_path: Optional[Path], year: int)
 
     scored: list[tuple[int, str, Path]] = []
     for candidate in candidates:
-        if year in _extract_years(candidate):
-            scored.append((0, candidate.name.lower(), candidate))
-        elif _workbook_mentions_year(candidate, year):
-            scored.append((1, candidate.name.lower(), candidate))
+        cand_years = _extract_years(candidate)
+        if cand_years:
+            if year in cand_years:
+                scored.append((0, candidate.name.lower(), candidate))
         else:
-            scored.append((2, candidate.name.lower(), candidate))
+            if _workbook_mentions_year(candidate, year):
+                scored.append((1, candidate.name.lower(), candidate))
 
+    if not scored:
+        return None
     scored.sort()
-    if scored[0][0] < 2:
-        return scored[0][2]
-    if len(scored) == 1:
-        return scored[0][2]
-    return None
+    return scored[0][2]
 
 
 def _resolve_questionario_debiti_sheet(source_wb, mapping: dict):
@@ -200,6 +200,41 @@ def process_questionario_debiti_row(
     """Risolve una riga con `source_workbook=questionario_debiti`."""
     path = _discover_questionario_debiti_workbook(bdap_path, int(year))
     if path is None:
+        try:
+            from .automation_questionario import _discover_questionario_workbook
+            q_path = _discover_questionario_workbook(bdap_path, int(year))
+            if q_path is not None:
+                q_wb = load_workbook(q_path, data_only=True)
+                for sname in q_wb.sheetnames:
+                    if "domandepreliminari" in normalize_text(sname):
+                        ws_prelim = q_wb[sname]
+                        found_no = False
+                        coord = "B19"
+                        for r_i in range(1, min(ws_prelim.max_row + 1, 100)):
+                            for c_i in range(1, 4):
+                                c_v = ws_prelim.cell(r_i, c_i).value
+                                if c_v and "debitifuoribilancio" in normalize_text(str(c_v)):
+                                    found_no = True
+                                    coord = ws_prelim.cell(r_i, c_i).coordinate
+                                    break
+                            if found_no:
+                                break
+                        q_wb.close()
+                        if found_no:
+                            target_cell.value = "No"
+                            if keep_source_reference:
+                                target_cell.comment = create_source_comment(
+                                    source_file_name=q_path.name,
+                                    sheet_name=ws_prelim.title,
+                                    cell_ref=coord,
+                                    header="QUESTIONARIO BILANCIO",
+                                    detail="debiti fuori bilancio non rilevati",
+                                )
+                            return True, 1, None, None, q_path, "No"
+                q_wb.close()
+        except Exception:
+            pass
+
         if data_source_mapping.get("optional", False):
             target_cell.value = None
             target_cell.comment = None
@@ -239,9 +274,11 @@ def process_questionario_debiti_row(
 
         target_cell.value = _normalize_yes_no(value_cell.value)
         if keep_source_reference:
-            target_cell.comment = Comment(
-                f"Fonte questionario debiti: {path.name} | {format_source_location(ws_source.title, value_cell.coordinate)}",
-                "BDAP Automation",
+            target_cell.comment = create_source_comment(
+                source_file_name=path.name,
+                sheet_name=ws_source.title,
+                cell_ref=value_cell.coordinate,
+                header="QUESTIONARIO DEBITI",
             )
         return True, 1, None, None, path, value_cell.value
     finally:

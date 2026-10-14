@@ -9,6 +9,11 @@ from .conclusioni import (
     detect_population,
     write_conclusioni_sheet,
 )
+from .comment_builder import (
+    create_parte_accantonata_comment,
+    create_source_comment,
+    fix_all_comments_in_workbook,
+)
 
 __all__ = [
     "normalize_text",
@@ -21,4 +26,8 @@ __all__ = [
     "detect_comune_name",
     "detect_population",
     "write_conclusioni_sheet",
+    "create_source_comment",
+    "create_parte_accantonata_comment",
+    "fix_all_comments_in_workbook",
 ]
+

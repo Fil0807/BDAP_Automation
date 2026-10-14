@@ -267,6 +267,9 @@ def find_bdap_value_by_expected_label_near_cell(
         value_cell = ws_bdap.cell(row=row_idx, column=base_col)
         value = value_cell.value
         if is_empty_value(value):
+            col_a_val = str(ws_bdap.cell(row=row_idx, column=1).value or "").strip().lower()
+            if col_a_val in ("no", "n") or "all. a1" in str(getattr(ws_bdap, "title", "")).lower():
+                return 0.0, value_cell.coordinate
             return None, None
         if isinstance(value, str) and not is_numeric_like(value):
             return None, None

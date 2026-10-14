@@ -11,8 +11,9 @@ from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
 from .automation_search import find_year_column, resolve_sheet_by_contains_or_idx
+from ..support.comment_builder import create_source_comment, fix_all_comments_in_workbook
 from ..support.default_mappings import TEMPLATE_SOURCES
-from ..support.text_utils import _coerce_int_or_default, text_options
+from ..support.text_utils import _coerce_int_or_default, text_options, normalize_text
 from ..support.value_formatter import coerce_numeric
 from ..support.value_resolver import (
     find_bdap_value_by_expected_label_near_cell,
@@ -93,6 +94,20 @@ def _resolve_fcde_residui_rendiconto(
         if numeric is not None:
             return numeric, actual_ref, ws_source.title
 
+    # Se non trovato nelle immediate vicinanze di cell_ref, cerca in tutto il foglio ws_source
+    for expected_label in expected_labels:
+        norm_exp = normalize_text(expected_label)
+        if not norm_exp:
+            continue
+        for r in range(1, ws_source.max_row + 1):
+            val_b = ws_source.cell(row=r, column=2).value
+            val_a = ws_source.cell(row=r, column=1).value
+            if (val_b and norm_exp in normalize_text(val_b)) or (val_a and norm_exp in normalize_text(val_a)):
+                val_cell = ws_source.cell(row=r, column=4).value
+                numeric = coerce_numeric(val_cell)
+                if numeric is not None:
+                    return numeric, f"D{r}", ws_source.title
+
     value, actual_ref = find_bdap_value_with_fallback(ws_source, cell_ref, max_offset=row_tol)
     numeric = coerce_numeric(value)
     if numeric is not None:
@@ -167,7 +182,7 @@ def _read_fcde_percentage_from_sheet(ws_fcde, year: int) -> tuple[Optional[Decim
 def _set_comment(target_cell, source_file_name: str, source_descr: str, keep_source_reference: bool) -> None:
     if not keep_source_reference:
         return
-    target_cell.comment = Comment(f"Fonte BDAP: {source_file_name} | {source_descr}", "BDAP Automation")
+    target_cell.comment = create_source_comment(source_file_name=source_file_name, source_descr=source_descr)
 
 
 def populate_fcde_sheet_in_workbook(
@@ -273,6 +288,7 @@ def populate_fcde_sheet(
             keep_source_reference=keep_source_reference,
             log=log,
         )
+        fix_all_comments_in_workbook(wb_analysis)
         wb_analysis.save(analysis_path)
         return result
     finally:
@@ -284,3 +300,25 @@ def read_fcde_percentage_from_workbook(wb_analysis, year: int) -> tuple[Optional
     if FCDE_SHEET_NAME not in wb_analysis.sheetnames:
         return None, None
     return _read_fcde_percentage_from_sheet(wb_analysis[FCDE_SHEET_NAME], year)
+
+
+def read_fcde_totale_from_workbook(wb_analysis, year: int) -> tuple[Optional[Decimal], Optional[str]]:
+    """Legge il totale residui attivi EP già compilato nel foglio FCDE."""
+    if FCDE_SHEET_NAME not in wb_analysis.sheetnames:
+        return None, None
+    ws_fcde = wb_analysis[FCDE_SHEET_NAME]
+    year_col = find_year_column(ws_fcde, year, max_header_rows=3)
+    if year_col is None:
+        return None, None
+    cell = ws_fcde.cell(row=FCDE_ROW_TOTALE, column=year_col)
+    numeric = coerce_numeric(cell.value)
+    if numeric is not None:
+        return numeric, cell.coordinate
+
+    val_i = coerce_numeric(ws_fcde.cell(row=FCDE_ROW_RESIDUI_TITOLO_I, column=year_col).value)
+    val_iii = coerce_numeric(ws_fcde.cell(row=FCDE_ROW_RESIDUI_TITOLO_III, column=year_col).value)
+    if val_i is not None or val_iii is not None:
+        tot = (val_i or Decimal("0")) + (val_iii or Decimal("0"))
+        return tot, cell.coordinate
+    return None, cell.coordinate
+

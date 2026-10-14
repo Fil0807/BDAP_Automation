@@ -28,9 +28,16 @@ from ..support.value_resolver import (
     find_bdap_value_with_fallback,
     format_source_location,
 )
+from ..support.comment_builder import (
+    create_parte_accantonata_comment,
+    create_source_comment,
+    fix_all_comments_in_workbook,
+)
+
 from .automation_fcde import (
     populate_fcde_sheet_in_workbook,
     read_fcde_percentage_from_workbook,
+    read_fcde_totale_from_workbook,
     _resolve_fcde_ratio_from_source,
 )
 from .automation_questionario import (
@@ -52,10 +59,7 @@ from .automation_search import (
 logger = logging.getLogger(__name__)
 
 MANUAL_REVIEW_ONLY_LABELS = {
-    "fondocassadaidatisiope",
-    "spesadelpersonalesostenutarientraneilimitidicui",
     "riscossioniproventidapermessoacostruire",
-    "contrastoallevasionetributaria",
 }
 
 DELEGATED_SOURCE_HANDLERS = {
@@ -65,13 +69,27 @@ DELEGATED_SOURCE_HANDLERS = {
 }
 
 
+IGNORE_ROW_LABEL_TOKENS = {"fonte?", "fonte", "note", "note:"}
+
+
 def extract_row_label(ws, row_idx: int, max_columns: int = 4) -> str:
     """Estrae l'etichetta di riga più probabile dal lato sinistro del foglio."""
+    if ws.max_column >= 3:
+        val_c = ws.cell(row=row_idx, column=3).value
+        if isinstance(val_c, str) and val_c.strip():
+            cleaned_c = val_c.strip()
+            if cleaned_c.lower() not in IGNORE_ROW_LABEL_TOKENS:
+                return cleaned_c
+
     for col_idx in range(1, min(max_columns, ws.max_column) + 1):
         value = ws.cell(row=row_idx, column=col_idx).value
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            cleaned = value.strip()
+            if cleaned.lower() in IGNORE_ROW_LABEL_TOKENS:
+                continue
+            return cleaned
     return ""
+
 
 
 def resolve_bdap_sheet(wb_bdap, sheet_idx: str):
@@ -159,8 +177,11 @@ def _resolve_special_source_entry(normalized_row_label: str, sources: Optional[d
                 if word in normalize_text(key) and 'titolo' in normalize_text(key):
                     return key, source
 
-    # 1. Prova a trovare una chiave che sia contenuta nell'etichetta o che contenga l'etichetta (match parziale semplice)
-    for key, source in mapping_sources.items():
+    # 1. Prova a trovare una chiave che sia contenuta nell'etichetta o che contenga l'etichetta (match parziale),
+    # privilegiando le chiavi più lunghe e specifiche per evitare che chiavi corte (es. 'riscossioni')
+    # intercettino etichette più dettagliate (es. '%riscossionisanzionidelcodicedellastrada').
+    sorted_items = sorted(mapping_sources.items(), key=lambda item: len(normalize_text(item[0])), reverse=True)
+    for key, source in sorted_items:
         if not _source_matches_row_context(key):
             continue
         key_norm = normalize_text(key)
@@ -399,7 +420,7 @@ def fill_accounting_analysis(
         # Flusso da diagramma: le righe da relazione non vengono risolte automaticamente.
         # La cella resta vuota e il caso viene contato tra gli unresolved.
         if use_special_source and source_workbook == "relazione":
-            process_relazione_row(
+            handled, delta_rows, _, _, _, _ = process_relazione_row(
                 target_cell,
                 bdap_path,
                 year,
@@ -407,6 +428,9 @@ def fill_accounting_analysis(
                 special_source,
                 keep_source_reference=keep_source_reference,
             )
+            if handled:
+                updated_rows += delta_rows
+                continue
             mark_unresolved(target_cell, f"source_workbook relazione: {special_key or row_label}")
             continue
 
@@ -459,6 +483,30 @@ def fill_accounting_analysis(
                         continue
                     raise KeyError(f"Missing {source_workbook} workbook")
 
+                if special_key in ("residuiattivititietiiiep", "dicuiresiduiattivititieiiiepeserciziprecedenti"):
+                    fcde_tot, fcde_cell_ref = read_fcde_totale_from_workbook(wb_analysis, year)
+                    if fcde_tot is None and bdap_path is not None:
+                        populate_fcde_sheet_in_workbook(
+                            wb_analysis,
+                            bdap_path,
+                            year,
+                            keep_source_reference=keep_source_reference,
+                        )
+                        fcde_tot, fcde_cell_ref = read_fcde_totale_from_workbook(wb_analysis, year)
+                    if fcde_tot is not None:
+                        target_cell.value = format_value_italian(fcde_tot)
+                        if keep_source_reference and bdap_path is not None:
+                            target_cell.comment = create_source_comment(
+                                source_file_name=bdap_path.name,
+                                sheet_name="FCDE",
+                                cell_ref=fcde_cell_ref or "FCDE",
+                            )
+                        updated_rows += 1
+                        continue
+                    if special_source.get("optional", False):
+                        mark_unresolved(target_cell, f"No value found for {special_key or row_label}")
+                        continue
+
                 if special_key == "fcdeinrapportoaresiduiattivi":
                     fcde_value, fcde_cell_ref = read_fcde_percentage_from_workbook(wb_analysis, year)
                     if fcde_value is None and bdap_path is not None:
@@ -477,9 +525,11 @@ def fill_accounting_analysis(
                         )
                         target_cell.value = formatted_value
                         if keep_source_reference and bdap_path is not None:
-                            source_file_name = bdap_path.name
-                            source_descr = f"foglio FCDE, cella {fcde_cell_ref or 'FCDE!I6'}"
-                            target_cell.comment = Comment(f"Fonte BDAP: {source_file_name} | {source_descr}", "BDAP Automation")
+                            target_cell.comment = create_source_comment(
+                                source_file_name=bdap_path.name,
+                                sheet_name="FCDE",
+                                cell_ref=fcde_cell_ref or "FCDE!I6",
+                            )
                         updated_rows += 1
                         continue
                     if special_source.get("optional", False):
@@ -498,7 +548,21 @@ def fill_accounting_analysis(
                     ws_bdap_src = resolve_bdap_sheet(source_wb, special_source["sheet_idx"])
 
                 if ws_bdap_src is None:
-                    if special_source.get("optional", False):
+                    if "default_if_missing" in special_source:
+                        value = special_source["default_if_missing"]
+                        actual_cell_ref = "DEFAULT_IF_MISSING"
+                        percent_flag = bool(special_source.get("is_percentage", False))
+                        yes_no_flag = bool(special_source.get("is_boolean_yes_no", False))
+                        formatted_value = format_value_italian(value, percent=percent_flag, boolean_yes_no=yes_no_flag)
+                        target_cell.value = formatted_value
+                        if keep_source_reference and bdap_path is not None:
+                            target_cell.comment = create_source_comment(
+                                source_file_name=source_file_name,
+                                detail=f"voce non presente | valore predefinito {formatted_value}",
+                            )
+                        updated_rows += 1
+                        continue
+                    elif special_source.get("optional", False):
                         mark_unresolved(target_cell, f"Missing sheet for {special_key or row_label}")
                         continue
                     continue
@@ -936,9 +1000,10 @@ def fill_accounting_analysis(
                         mark_unresolved(target_cell, f"No value found for {special_key or row_label}")
                     continue
 
-                # Respect percentage flag in the source mapping
+                # Respect percentage flag and boolean yes/no flag in the source mapping
                 percent_flag = bool(special_source.get("is_percentage", False))
-                formatted_value = format_value_italian(value, percent=percent_flag)
+                yes_no_flag = bool(special_source.get("is_boolean_yes_no", False))
+                formatted_value = format_value_italian(value, percent=percent_flag, boolean_yes_no=yes_no_flag)
                 target_cell.value = formatted_value
                 # If we wrote a multiline display_refs value, enable wrapText so it displays
                 try:
@@ -956,18 +1021,43 @@ def fill_accounting_analysis(
                         resolved_special_numeric_values["prospettoevoluzionerisultatoammne"] = numeric_value
 
                 if keep_source_reference and bdap_path is not None:
-                    if source_descr_override is not None:
-                        source_descr = source_descr_override
+                    lbl = special_source.get("label") if isinstance(special_source, dict) else None
+                    if special_key == "parteaccantonatab" and actual_cell_ref not in ("CALCULATED", "DEFAULT_IF_MISSING"):
+                        target_cell.comment = create_parte_accantonata_comment(
+                            source_file_name=source_file_name,
+                            sheet_name=ws_bdap_src.title if ws_bdap_src else None,
+                            cell_ref=actual_cell_ref,
+                            total_formatted_val=formatted_value,
+                            wb_bdap=source_wb,
+                        )
+                    elif source_descr_override is not None:
+                        target_cell.comment = create_source_comment(
+                            source_file_name=source_file_name,
+                            source_descr=source_descr_override,
+                            label=lbl,
+                        )
                     elif actual_cell_ref == "CALCULATED":
                         missing_ref = str(special_source.get("cell_ref", "sorgente prevista"))
-                        source_descr = f"valore non trovato in {missing_ref} | calcolata come A-B-C-D"
+                        target_cell.comment = create_source_comment(
+                            source_file_name=source_file_name,
+                            sheet_name=ws_bdap_src.title if ws_bdap_src else None,
+                            label=lbl,
+                            detail=f"valore non trovato in {missing_ref} | calcolata come A-B-C-D",
+                        )
                     elif actual_cell_ref == "DEFAULT_IF_MISSING":
-                        source_descr = "voce non trovata nella sorgente | valore predefinito 0"
+                        target_cell.comment = create_source_comment(
+                            source_file_name=source_file_name,
+                            sheet_name=ws_bdap_src.title if ws_bdap_src else None,
+                            label=lbl,
+                            detail=f"voce non trovata nella sorgente | valore predefinito {formatted_value}",
+                        )
                     else:
-                        source_descr = format_source_location(ws_bdap_src.title, actual_cell_ref)
-                    if "label" in special_source:
-                        source_descr += f" | voce {special_source['label']}"
-                    target_cell.comment = Comment(f"Fonte BDAP: {source_file_name} | {source_descr}", "BDAP Automation")
+                        target_cell.comment = create_source_comment(
+                            source_file_name=source_file_name,
+                            sheet_name=ws_bdap_src.title if ws_bdap_src else None,
+                            cell_ref=actual_cell_ref,
+                            label=lbl,
+                        )
 
                 updated_rows += 1
                 continue
@@ -989,12 +1079,11 @@ def fill_accounting_analysis(
             target_cell.value = formatted_value
             
             if keep_source_reference and bdap_path is not None:
-                comment_text = f"Fonte BDAP: {bdap_path.name}"
-                if actual_source:
-                    comment_text += f" | {actual_source}"
-                elif sheet_token:
-                    comment_text += f" | foglio {sheet_token}"
-                target_cell.comment = Comment(comment_text, "BDAP Automation")
+                target_cell.comment = create_source_comment(
+                    source_file_name=bdap_path.name,
+                    sheet_name=ws_bdap_ref.title if ws_bdap_ref else sheet_token,
+                    cell_ref=actual_cell_ref if parsed is not None else None,
+                )
             
             updated_rows += 1
 
@@ -1008,6 +1097,7 @@ def fill_accounting_analysis(
         for reason, count in sorted(unresolved_by_reason.items(), key=lambda item: item[1], reverse=True):
             logger.info("- %s -> %s", reason, count)
 
+    fix_all_comments_in_workbook(wb_analysis)
     wb_analysis.save(output_path)
     closed_workbook_ids = set()
     for wb_data, wb_formula in questionario_workbook_cache.values():
