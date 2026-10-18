@@ -83,7 +83,8 @@ In questo caso il programma:
 | `prospettocassa` | D17 | 11 | rendiconto | Fondo di cassa al 31 dicembre |
 | `importocassavincolata` | D8 (year cell C6) | sheet name contains `SEZ. II-GEST. FIN. CASSA` | questionario | di cui cassa vincolata |
 | `debitifuoribilancio` | P19 | Sezione preliminare | questionario_debiti | 4. Sono stati riconosciuti debiti fuori bilancio nel |
-| `fcdeinrapportoaresiduiattivi` | I6 | sheet name contains `FCDE` | analysis | FCDE in rapporto a residui attivi (is_percentage=False) |
+| `fcdeinrapportoaresiduiattivi` | I7 | sheet name contains `FCDE` | analysis | FCDE in rapporto a residui attivi (riga 7 FCDE, riga 25 ANALISI CONTABILE) |
+| `fcdepluspartedisponibile` | I8 | sheet name contains `FCDE` | analysis | % FCDE + parte disponibile su residui attivi (riga 8 FCDE, riga 26 ANALISI CONTABILE) |
 | `fpvpartecorrenteal3112` | D21 | 11 | rendiconto | Fondo pluriennale vincolato per spese correnti |
 | `fpvpartecapitaleal3112` | D22 | 11 | rendiconto | Fondo pluriennale vincolato per spese in conto capitale |
 | `fondocontenzioso` | I16 | 12 | rendiconto | Totale Fondo contenzioso |
@@ -94,9 +95,14 @@ In questo caso il programma:
 | `equilibriodibilanciow2` | B72 | 7 | rendiconto | W2) Equilibrio di bilancio |
 | `equilibriocomplessivow3` | B74 | 7 | rendiconto | W3) Equilibrio complessivo |
 | `fondocassadaidatisiope` | - | - | - | Fondo cassa dai dati SIOPE (no explicit cell) |
-| `anticipazionetesoreria` | B31 | 6 | rendiconto | Titolo 7: Anticipazioni da istituto tesoriere/cassiere |
-| `fal` | B29 | 11 | rendiconto | Fondo anticipazioni liquidità |
-| `contrazionenuovimutui` | E25 (fallback F25) | sheet name contains `SEZ. IV -INDEBITAMENTO_DATI _` | questionario | 3) Debito complessivo contratto (static_column, check_year_in_label) |
+| `anticipazionetesoreria` | B31 | 6 | rendiconto | Titolo 7: Anticipazioni da istituto tesoriere/cassiere (riga 32 AC) |
+| `anticipazionetesoreriaquestionario` | dinamica / E10 | `SEZ. II-GEST. FIN. CASSA` / `DATI CASSA` | questionario | Anticipazione di tesoreria (riga 33 AC: Si/No, Questionario consuntivo) |
+| `giorniutilizzoanticipazionetesoreria` | dinamica / E12 | `SEZ. II-GEST. FIN. CASSA` / `DATI CASSA` | questionario | Giorni di effettivo utilizzo anticipazione (riga 34 AC) |
+| `importononrestituitoanticipazione` | dinamica / E14 | `SEZ. II-GEST. FIN. CASSA` / `DATI CASSA` | questionario | Importo non restituito al 31/12 (riga 35 AC) |
+| `fal` | B29 | 11 | rendiconto | Fondo anticipazioni liquidità (riga 36 AC, BDAP Rendiconto) |
+| `falquestionario` | dinamica / E67 | `SEZ. II -DATI RISULT. FINAN` | questionario | FAL (riga 37 AC: Si/No, Questionario consuntivo) |
+| `incidenzaprime3titoli` | dinamica / E14 | `SEZ. IV -INDEBITAMENTO_DATI _` / `DATI INDEBITAMENTO` | questionario | Incidenza dell'indebitamento < 10% (riga 38 AC, formattata in %) |
+| `debitocomplessivocontratto` | dinamica / E25 | `SEZ. IV -INDEBITAMENTO_DATI _` / `DATI INDEBITAMENTO` | questionario | Debito complessivo contratto (riga 39 AC) |
 | `accantonamentocifrarelativaairinnovicontrattualidelccnl` | I26 | 12 | rendiconto | FONDO RINNOVI CONTRATTUALI |
 | `spesadelpersonalesostenuta` | - | - | relazione | Spesa del personale sostenuta (no explicit cell) |
 | `incidenzaspesapersonalesuspesacorrente` | D27 | 1 | indicatori | Incidenza della spesa di personale sulla spesa corrente |
@@ -155,13 +161,12 @@ Note:
 
 
 
-## Voci Non Auto-Compilate
+## Fogli e struttura del Template
 
-Queste voci sono lasciate intenzionalmente vuote o non hanno una sorgente automatica affidabile, perché richiedono relazione, PDF, dati SIOPE o verifica manuale:
-
-- FONDO CASSA DAI DATI SIOPE 1450 - FONDO DI CASSA DELL'ENTE ALLA FINE DEL PERIODO DI RIFERIMENTO - QUOTA VINCOLATA
-- SPESA DEL PERSONALE art. 1 comma 557
-- % RISCOSSIONI PROVENTI DA PERMESSO A COSTRUIRE
-- CONTRASTO ALL'EVASIONE TRIBUTARIA
-
-Quando una di queste voci viene automatizzata in futuro, spostarla nell'elenco mappature, indicare la sorgente usata e aggiungere un test dedicato.
+- **`ANAGRAFICA`** (Foglio 0): Compilato automaticamente all'avvio dell'elaborazione analizzando i questionari consuntivi disponibili. Estrae:
+  - Dati anagrafici dell'Ente (Denominazione, Codice Fiscale, Provincia, Regione, Tipologia, Popolazione).
+  - Delibere di approvazione consiliare del rendiconto (numero e data) per ciascun anno (2021-2025).
+  - Verbali dell'Organo di Revisione economico-finanziaria (numero e data) per ciascun anno.
+- **`ANALISI CONTABILE`**: Include le nuove righe collegate a FCDE (% FCDE + parte disponibile), Anticipazione di tesoreria da Questionario (ricorso Si/No, giorni utilizzo, importo non restituito), FAL da Questionario (Si/No), Incidenza indebitamento sui primi 3 titoli (< 10%) e Debito complessivo contratto.
+- **`FCDE`**: Struttura aggiornata con riga 6 (`='ANALISI CONTABILE'!{col}19`), riga 7 (% rispetto a residui), riga 8 (`=({col}2+{col}6)/{col}5*100`) e riga 9 (metodo ordinario/semplificato).
+- **Fogli rimossi**: `CONCLUSIONI` e `VERIFICA QUESTIONARI` sono stati eliminati dal template master. Il foglio `CONTROLLI-POST` è stato mantenuto.

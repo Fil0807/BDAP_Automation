@@ -26,8 +26,10 @@ FCDE_ROW_IMPORTO = 2
 FCDE_ROW_RESIDUI_TITOLO_I = 3
 FCDE_ROW_RESIDUI_TITOLO_III = 4
 FCDE_ROW_TOTALE = 5
-FCDE_ROW_PERCENTUALE = 6
-FCDE_ROW_METODO = 7
+FCDE_ROW_PARTE_DISPONIBILE = 6
+FCDE_ROW_PERCENTUALE = 7
+FCDE_ROW_PERCENTUALE_PLUS_DISPONIBILE = 8
+FCDE_ROW_METODO = 9
 
 def _resolve_fcde_importo(source_wb) -> tuple[Optional[Decimal], Optional[str], Optional[str]]:
     mapping = dict(TEMPLATE_SOURCES.get("dicuifcde", {}))
@@ -252,16 +254,40 @@ def populate_fcde_sheet_in_workbook(
             total_residui += residui_titolo_iii
         ws_fcde.cell(row=FCDE_ROW_TOTALE, column=year_col).value = total_residui
 
+    fcde_col_letter = get_column_letter(year_col)
+
+    # Riga 6: formula a ANALISI CONTABILE riga 19
+    ac_sheet = wb_analysis["ANALISI CONTABILE"] if "ANALISI CONTABILE" in wb_analysis.sheetnames else None
+    parte_disp_val = None
+    if ac_sheet is not None:
+        ac_year_col = find_year_column(ac_sheet, year, max_header_rows=3)
+        if ac_year_col is not None:
+            ac_col_letter = get_column_letter(ac_year_col)
+            cell_disp = ws_fcde.cell(row=FCDE_ROW_PARTE_DISPONIBILE, column=year_col)
+            cell_disp.value = f"='ANALISI CONTABILE'!{ac_col_letter}19"
+            _set_comment(cell_disp, "ANALISI CONTABILE", f"riga 19 colonna {ac_col_letter}", keep_source_reference)
+            parte_disp_val = coerce_numeric(ac_sheet.cell(row=19, column=ac_year_col).value)
+
+    # Riga 7: % rispetto a residui attivi conservati
     percentage = None
     if importo_fcde is not None and total_residui not in (None, Decimal("0")):
         percentage = (importo_fcde * Decimal("100")) / total_residui
 
     if percentage is not None:
-        cell = ws_fcde.cell(row=FCDE_ROW_PERCENTUALE, column=year_col)
-        cell.value = percentage
+        cell_perc = ws_fcde.cell(row=FCDE_ROW_PERCENTUALE, column=year_col)
+        cell_perc.value = percentage
         source_descr = "calcolata come Importo FCDE / Totale residui attivi EP * 100"
-        _set_comment(cell, source_file_name, source_descr, keep_source_reference)
+        _set_comment(cell_perc, source_file_name, source_descr, keep_source_reference)
 
+    # Riga 8: % FCDE+parte disponibile (riga 19) / residui attivi tit.I e III EP
+    cell_plus = ws_fcde.cell(row=FCDE_ROW_PERCENTUALE_PLUS_DISPONIBILE, column=year_col)
+    cell_plus.value = f"=({fcde_col_letter}2+{fcde_col_letter}6)*100/{fcde_col_letter}5"
+    if parte_disp_val is not None and importo_fcde is not None and total_residui not in (None, Decimal("0")):
+        perc_plus = ((importo_fcde + parte_disp_val) * Decimal("100")) / total_residui
+        source_descr_plus = "calcolata come (Importo FCDE + Parte disponibile AC riga 19) / Totale residui EP * 100"
+        _set_comment(cell_plus, source_file_name, source_descr_plus, keep_source_reference)
+
+    # Riga 9: METODO
     ws_fcde.cell(row=FCDE_ROW_METODO, column=year_col).value = "ordinario"
 
     if log is not None:
@@ -269,6 +295,27 @@ def populate_fcde_sheet_in_workbook(
         log(f"FCDE year {year}: populated column {year_ref}")
 
     return percentage, f"FCDE!{get_column_letter(year_col)}{FCDE_ROW_PERCENTUALE}"
+
+
+def read_fcde_percentage_plus_disponibile_from_workbook(wb_analysis, year: int) -> tuple[Optional[Decimal], Optional[str]]:
+    """Legge la percentuale combinata FCDE + parte disponibile dal foglio FCDE."""
+    if FCDE_SHEET_NAME not in wb_analysis.sheetnames:
+        return None, None
+    ws_fcde = wb_analysis[FCDE_SHEET_NAME]
+    year_col = find_year_column(ws_fcde, year, max_header_rows=3)
+    if year_col is None:
+        return None, None
+    cell = ws_fcde.cell(row=FCDE_ROW_PERCENTUALE_PLUS_DISPONIBILE, column=year_col)
+    numeric = coerce_numeric(cell.value)
+    if numeric is not None:
+        return numeric, cell.coordinate
+
+    importo = coerce_numeric(ws_fcde.cell(row=FCDE_ROW_IMPORTO, column=year_col).value) or Decimal("0")
+    parte_disp = coerce_numeric(ws_fcde.cell(row=FCDE_ROW_PARTE_DISPONIBILE, column=year_col).value) or Decimal("0")
+    totale = coerce_numeric(ws_fcde.cell(row=FCDE_ROW_TOTALE, column=year_col).value)
+    if totale not in (None, Decimal("0")):
+        return ((importo + parte_disp) * Decimal("100")) / totale, cell.coordinate
+    return None, cell.coordinate
 
 
 def populate_fcde_sheet(

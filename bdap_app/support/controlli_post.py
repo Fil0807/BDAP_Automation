@@ -83,7 +83,7 @@ def discover_controlli_post_files(base_dir: Path, years: Iterable[int] | None = 
         return files
 
     for path in base_dir.rglob("*.xlsx"):
-        if path.name.startswith("~$"):
+        if path.name.startswith("~$") or path.name.startswith("._") or "__MACOSX" in path.parts:
             continue
         folded_name = _fold_text(path.name)
         if "controlli" not in folded_name or "post" not in folded_name:
@@ -209,7 +209,10 @@ def collect_controlli_post_report(
     files = discover_controlli_post_files(base_dir, years=years)
     issues: list[ControlloPostIssue] = []
     for path in files:
-        issues.extend(read_controlli_post_issues(path))
+        try:
+            issues.extend(read_controlli_post_issues(path))
+        except Exception:
+            pass
     return ControlliPostReport(
         files=tuple(files),
         issues=tuple(issues),

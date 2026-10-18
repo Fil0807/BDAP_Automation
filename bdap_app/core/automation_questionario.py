@@ -39,7 +39,14 @@ QUESTIONARIO_ACTIVE_SPECIAL_KEYS = {
     'controllosullesocietàpartecipate',
     'partenariatopubblicoprivato',
     'prospettocoperturaserviziadomanda',
-    'resacontoagenti'
+    'resacontoagenti',
+    'anticipazionetesoreriaquestionario',
+    'giorniutilizzoanticipazionetesoreria',
+    'importononrestituitoanticipazione',
+    'falquestionario',
+    'incidenzaprime3titoli',
+    'debitocomplessivocontratto',
+    'contrazionenuovimutui',
 }
 def _resolve_questionario_year_column(ws_bdap, target_year: int, base_row: int, max_search_rows: int = 20, start_col: int = 1) -> Optional[int]:
     """Trova la colonna dell'anno nel questionario cercando verso l'alto dalla riga base."""
@@ -399,18 +406,134 @@ def resolve_dynamic_sanzioni_cds_cell(ws, year: int) -> Optional[tuple[int, int,
     return perc_row, year_col, cell_ref
 
 
+def resolve_dynamic_anticipazione_cassa_cell(ws, year: int, item_key: str) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente la cella per la tabella cassa (anticipazione di tesoreria)."""
+    target_row = None
+    for r in range(1, min(ws.max_row or 1, 100)):
+        for c in range(1, min(ws.max_column or 1, 5) + 1):
+            v = str(ws.cell(row=r, column=c).value or '').lower()
+            if item_key == 'somma' and any(k in v for k in ('somma delle entrate da anticipazioni', 'anticipazione complessivamente concedibile', 'anticipazione complessivamente concessa')):
+                target_row = r
+                break
+            elif item_key == 'giorni' and "giorni di utilizzo dell'anticipazione" in v:
+                target_row = r
+                break
+            elif item_key == 'non_restituito' and ('non restituita al 31' in v or 'non restituito al 31' in v):
+                target_row = r
+                break
+        if target_row:
+            break
+
+    if not target_row:
+        return None
+
+    year_col = None
+    for r in range(max(1, target_row - 6), min(ws.max_row or 1, target_row + 4)):
+        for c in range(1, min(ws.max_column or 1, 25) + 1):
+            val = ws.cell(row=r, column=c).value
+            if _coerce_year_value(val) == year:
+                year_col = c
+                break
+        if year_col:
+            break
+
+    if not year_col:
+        year_col = _resolve_questionario_year_column(ws, year, target_row, start_col=4)
+
+    if not year_col:
+        return None
+
+    cell_ref = f"{get_column_letter(year_col)}{target_row}"
+    return target_row, year_col, cell_ref
+
+
+def resolve_dynamic_fal_cell(ws, year: int) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente la cella per la domanda FAL nel questionario."""
+    target_row = None
+    label_col = 1
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, min(ws.max_column or 1, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                v_clean = val.lower()
+                if "anticipazione di liquidit" in v_clean or "d.l. 8 aprile 2013" in v_clean or "d.l. 35/2013" in v_clean:
+                    target_row = r
+                    label_col = c
+                    break
+        if target_row is not None:
+            break
+
+    if target_row is None:
+        return None
+
+    ans_col = None
+    for c in range(label_col + 1, min(ws.max_column or 1, label_col + 15) + 1):
+        cell = ws.cell(row=target_row, column=c)
+        if cell.value is not None:
+            ans_col = c
+            s_val = str(cell.value).strip().lower()
+            if getattr(cell, "data_type", None) == "f" or s_val.startswith("=") or s_val in ("si", "sì", "no"):
+                ans_col = c
+                break
+
+    if ans_col is None:
+        ans_col = 9
+
+    cell_ref = f"{get_column_letter(ans_col)}{target_row}"
+    return target_row, ans_col, cell_ref
+
+
+def resolve_dynamic_indebitamento_incidenza_cell(ws, year: int) -> Optional[tuple[int, int, str]]:
+    """Risolve dinamicamente la cella per l'incidenza % sul totale dei primi tre titoli (< 10%)."""
+    target_row = None
+    label_col = 1
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, min(ws.max_column or 1, 5) + 1):
+            val = ws.cell(row=r, column=c).value
+            if val is not None and isinstance(val, str):
+                v_clean = normalize_text(val)
+                if "incidenzapercentuale" in v_clean and any(k in v_clean for k in ("primitretitoli", "primi3titoli", "primitre", "primi3")):
+                    target_row = r
+                    label_col = c
+                    break
+        if target_row is not None:
+            break
+
+    if target_row is None:
+        return None
+
+    ans_col = None
+    for c in range(label_col + 1, min(ws.max_column or 1, label_col + 10) + 1):
+        cell = ws.cell(row=target_row, column=c)
+        if cell.value is not None and str(cell.value).strip() != "":
+            ans_col = c
+            break
+
+    if ans_col is None:
+        ans_col = 5
+
+    cell_ref = f"{get_column_letter(ans_col)}{target_row}"
+    return target_row, ans_col, cell_ref
+
+
 def resolve_dynamic_debito_mutui_cell(ws, year: int) -> Optional[tuple[int, int, str]]:
     """Risolve dinamicamente la cella per contrazionenuovimutui (Debito complessivo contratto)."""
     target_row = None
+    label_col = 1
     for r in range(1, ws.max_row + 1):
         for c in range(1, min(ws.max_column or 5, 5) + 1):
             val = ws.cell(row=r, column=c).value
             if val is not None and isinstance(val, str):
                 v_clean = normalize_text(val)
                 if "debitocomplessivocontratto" in v_clean or ("debito" in v_clean and "contratto" in v_clean):
-                    target_row = r
-                    break
-        if target_row is not None:
+                    if "nell'esercizio" in val.lower() or "3)" in val:
+                        target_row = r
+                        label_col = c
+                        break
+                    elif target_row is None:
+                        target_row = r
+                        label_col = c
+        if target_row is not None and "nell'esercizio" in str(ws.cell(row=target_row, column=label_col).value or "").lower():
             break
 
     if target_row is None:
@@ -426,6 +549,16 @@ def resolve_dynamic_debito_mutui_cell(ws, year: int) -> Optional[tuple[int, int,
                 break
         if target_col is not None:
             break
+
+    if target_col is None:
+        for c in range(label_col + 1, min(ws.max_column or 1, label_col + 10) + 1):
+            cell = ws.cell(row=target_row, column=c)
+            if cell.value is not None:
+                s_val = str(cell.value).strip()
+                if s_val not in ("+", "+ ", "+\xa0", "-"):
+                    target_col = c
+                    if getattr(cell, "data_type", None) == "f" or s_val.startswith("="):
+                        break
 
     if target_col is None:
         target_col = 5  # default colonna E
@@ -922,8 +1055,8 @@ def process_questionario_row(
     questionario_formula_wb = wb_questionario_formula
     source_file_name = questionario_path_cache.name if questionario_path_cache is not None else (bdap_path.name if bdap_path is not None else "n/d")
 
-    # For contrazionenuovimutui prefer questionario files that include the target year in the filename.
-    if special_key == "contrazionenuovimutui" and questionario_path_cache is not None:
+    # For contrazionenuovimutui and debt items prefer questionario files that include the target year in the filename.
+    if special_key in ("contrazionenuovimutui", "debitocomplessivocontratto", "incidenzaprime3titoli") and questionario_path_cache is not None:
         try:
             years_in_name = {int(m) for m in re.findall(r"(19\d{2}|20\d{2})", questionario_path_cache.name)}
         except Exception:
@@ -1233,7 +1366,17 @@ def process_questionario_row(
             dyn_res = resolve_dynamic_cassa_vincolata_cell(ws_bdap_src, year)
         elif special_key == "%riscossionisanzionidelcodicedellastrada" and ws_bdap_src is not None:
             dyn_res = resolve_dynamic_sanzioni_cds_cell(ws_bdap_src, year)
-        elif special_key == "contrazionenuovimutui" and ws_bdap_src is not None:
+        elif special_key == "anticipazionetesoreriaquestionario" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_anticipazione_cassa_cell(ws_bdap_src, year, "somma")
+        elif special_key == "giorniutilizzoanticipazionetesoreria" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_anticipazione_cassa_cell(ws_bdap_src, year, "giorni")
+        elif special_key == "importononrestituitoanticipazione" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_anticipazione_cassa_cell(ws_bdap_src, year, "non_restituito")
+        elif special_key == "falquestionario" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_fal_cell(ws_bdap_src, year)
+        elif special_key == "incidenzaprime3titoli" and ws_bdap_src is not None:
+            dyn_res = resolve_dynamic_indebitamento_incidenza_cell(ws_bdap_src, year)
+        elif special_key in ("debitocomplessivocontratto", "contrazionenuovimutui") and ws_bdap_src is not None:
             dyn_res = resolve_dynamic_debito_mutui_cell(ws_bdap_src, year)
         elif special_key in ("ufficioavvocatura", "incarichilegaliesterni", "ufficioavvocaturaavvocatura") and ws_bdap_src is not None:
             kw = "avvocatura" if "avvocatura" in str(special_key) else "incarichilegali"
@@ -1246,21 +1389,35 @@ def process_questionario_row(
             val_direct = ws_bdap_src.cell(row=row_idx, column=col_idx).value
 
             is_unanswered = False
-            if special_key in ("ufficioavvocatura", "incarichilegaliesterni", "ufficioavvocaturaavvocatura") and questionario_formula_wb is not None:
+            if questionario_formula_wb is not None and ws_bdap_src.title in questionario_formula_wb.sheetnames:
                 try:
-                    if ws_bdap_src.title in questionario_formula_wb.sheetnames:
-                        ws_f = questionario_formula_wb[ws_bdap_src.title]
-                        raw_cell = ws_f[actual_base_ref]
-                        if getattr(raw_cell, "data_type", None) == "f" or str(raw_cell.value or "").startswith("="):
-                            f_res = _resolve_questionario_formula_value(questionario_formula_wb, ws_f, actual_base_ref)
+                    ws_f = questionario_formula_wb[ws_bdap_src.title]
+                    raw_cell = ws_f[actual_base_ref]
+                    if getattr(raw_cell, "data_type", None) == "f" or str(raw_cell.value or "").startswith("="):
+                        f_res = _resolve_questionario_formula_value(questionario_formula_wb, ws_f, actual_base_ref)
+                        if special_key in ("ufficioavvocatura", "incarichilegaliesterni", "ufficioavvocaturaavvocatura"):
                             if f_res is None or str(f_res).strip() == "":
                                 is_unanswered = True
+                        elif f_res is not None and str(f_res).strip() != "":
+                            val_direct = f_res
                 except Exception:
                     pass
 
             if is_unanswered:
                 value = None
             elif not is_empty_value(val_direct):
+                if special_key == "incidenzaprime3titoli":
+                    try:
+                        num_inc = Decimal(str(val_direct).replace("%", "").strip())
+                        val_direct = f"{num_inc:.2f}%".replace(".", ",")
+                    except Exception:
+                        pass
+                elif special_key in ("anticipazionetesoreriaquestionario", "giorniutilizzoanticipazionetesoreria", "importononrestituitoanticipazione", "debitocomplessivocontratto", "contrazionenuovimutui"):
+                    try:
+                        if str(val_direct).strip() == "0":
+                            val_direct = 0
+                    except Exception:
+                        pass
                 value = val_direct
                 actual_cell_ref = actual_base_ref
 

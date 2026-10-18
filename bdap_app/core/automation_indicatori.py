@@ -74,6 +74,8 @@ def _discover_aux_workbook(bdap_path: Optional[Path], token: str, year: int) -> 
             for candidate in root.rglob("*.xlsx")
             if (candidate != bdap_path or token == "indicatori")
             and not candidate.name.startswith("~$")
+            and not candidate.name.startswith("._")
+            and "__MACOSX" not in candidate.parts
             and _candidate_matches_token(candidate, token)
         }
     )

@@ -420,10 +420,10 @@ TEMPLATE_SOURCES: dict = {
     },
 
     # -------------------------------------------------------------------------
-    # 22. fcdeinrapportoaresiduiattivi - Row 25 AC / Row 23 MAPPATURE_BDAP
+    # 22. fcdeinrapportoaresiduiattivi - Row 25 AC / Row 22 MAPPATURE_BDAP
     # -------------------------------------------------------------------------
     'fcdeinrapportoaresiduiattivi': {
-        'cell_ref': 'I6',
+        'cell_ref': 'I7',
         'expected_label': [
             '% rispetto a residui attivi conservati (minimo 30%)',
             '% rispetto a residui attivi conservati',
@@ -431,8 +431,29 @@ TEMPLATE_SOURCES: dict = {
         ],
         'is_percentage': False,
         'label_check_cells': [
-            'A6',
-            'B6',
+            'A7',
+            'B7',
+        ],
+        'optional': True,
+        'row_tolerance': 2,
+        'sheet_name_contains': 'FCDE',
+        'source_workbook': 'analysis',
+        'strict_expected_label': False,
+    },
+
+    # -------------------------------------------------------------------------
+    # 22b. fcdepluspartedisponibile - Row 26 AC / Row 23 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'fcdepluspartedisponibile': {
+        'cell_ref': 'I8',
+        'expected_label': [
+            '% FCDE+parte disponibile (riga 19) / residui attivi tit.I e III EP',
+            '% FCDE+parte disponibile',
+        ],
+        'is_percentage': False,
+        'label_check_cells': [
+            'A8',
+            'B8',
         ],
         'optional': True,
         'row_tolerance': 2,
@@ -550,7 +571,7 @@ TEMPLATE_SOURCES: dict = {
     },
 
     # -------------------------------------------------------------------------
-    # 28. anticipazionetesoreria - Row 31 AC / Row 29 MAPPATURE_BDAP
+    # 28. anticipazionetesoreria - Row 32 AC / Row 29 MAPPATURE_BDAP (BDAP-Rend)
     # -------------------------------------------------------------------------
     'anticipazionetesoreria': {
         'cell_refs': [
@@ -568,7 +589,69 @@ TEMPLATE_SOURCES: dict = {
     },
 
     # -------------------------------------------------------------------------
-    # 29. fal - Row 32 AC / Row 30 MAPPATURE_BDAP
+    # 28b. anticipazionetesoreriaquestionario - Row 33 AC / Row 30 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'anticipazionetesoreriaquestionario': {
+        'cell_ref': 'G24',
+        'dynamic_resolver': 'cassa_tab5_somma',
+        'expected_label': [
+            'Somma delle entrate da anticipazioni di tesoreria (Titolo 7, tipologia 100)',
+            'Somma delle entrate da anticipazioni di tesoreria',
+            'anticipazione complessivamente concessa',
+        ],
+        'optional': True,
+        'sheet_name_contains': [
+            'DATI CASSA',
+            'GEST. FIN. CASSA',
+            'Dati Cassa',
+            'GEST_FIN. 1',
+        ],
+        'source_workbook': 'questionario',
+    },
+
+    # -------------------------------------------------------------------------
+    # 28c. giorniutilizzoanticipazionetesoreria - Row 34 AC / Row 31 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'giorniutilizzoanticipazionetesoreria': {
+        'cell_ref': 'G27',
+        'dynamic_resolver': 'cassa_tab5_giorni',
+        'expected_label': [
+            "Giorni di utilizzo dell'anticipazione",
+            "Giorni di utilizzo dell'anticipazione di tesoreria",
+        ],
+        'optional': True,
+        'sheet_name_contains': [
+            'DATI CASSA',
+            'GEST. FIN. CASSA',
+            'Dati Cassa',
+            'GEST_FIN. 1',
+        ],
+        'source_workbook': 'questionario',
+    },
+
+    # -------------------------------------------------------------------------
+    # 28d. importononrestituitoanticipazione - Row 35 AC / Row 32 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'importononrestituitoanticipazione': {
+        'cell_ref': 'G26',
+        'dynamic_resolver': 'cassa_tab5_non_restituito',
+        'expected_label': [
+            'Importo anticipazione non restituita al 31/12 (*)',
+            'Importo anticipazione non restituita al 31/12',
+            'Importo non restituito al 31.12',
+        ],
+        'optional': True,
+        'sheet_name_contains': [
+            'DATI CASSA',
+            'GEST. FIN. CASSA',
+            'Dati Cassa',
+            'GEST_FIN. 1',
+        ],
+        'source_workbook': 'questionario',
+    },
+
+    # -------------------------------------------------------------------------
+    # 29. fal - Row 36 AC / Row 33 MAPPATURE_BDAP (BDAP-Rend)
     # -------------------------------------------------------------------------
     'fal': {
         'cell_ref': 'B29',
@@ -584,28 +667,93 @@ TEMPLATE_SOURCES: dict = {
     },
 
     # -------------------------------------------------------------------------
-    # 30. contrazionenuovimutui - Row 33 AC / Row 31 MAPPATURE_BDAP
+    # 29b. falquestionario - Row 37 AC / Row 34 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'falquestionario': {
+        'cell_ref': 'J96',
+        'dynamic_resolver': 'fal_question',
+        'expected_label': [
+            "L'ente ha richiesto l'anticipazione di liquidità di cui al d.l. 8 aprile 2013",
+            "FAL",
+        ],
+        'optional': True,
+        'sheet_name_contains': [
+            'SEZ.II-GEST. FIN. RESIDUI_F _',
+            'SEZ.II-GEST. FIN. RESIDUI_F',
+            'SEZ. II - GEST.FIN. 2 _',
+            'SEZ. II - GEST.FIN. 2_',
+            'SEZ. II-DATI RISULT. FINANZ._',
+        ],
+        'source_workbook': 'questionario',
+    },
+
+    # -------------------------------------------------------------------------
+    # 30. incidenzaprime3titoli - Row 38 AC / Row 35 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'incidenzaprime3titoli': {
+        'cell_ref': 'E17',
+        'dynamic_resolver': 'indebitamento_incidenza',
+        'expected_label': [
+            'Incidenza percentuale sul totale dei primi tre titoli',
+            'Incidenza % sul totale dei primi 3 titoli delle entrate < 10%',
+        ],
+        'optional': True,
+        'sheet_name_contains': [
+            'DATI INDEBITAMENTO',
+            'INDEBITAMENTO_DATI',
+            'SEZ. IV -INDEBITAMENTO_DATI _',
+            'SEZ. IV -INDEBITAMENTO_DATI',
+            'SEZ. III - INDEB.-FINANZ. DER._',
+            'SEZ. III - INDEB.-FINANZ. DER.',
+        ],
+        'source_workbook': 'questionario',
+    },
+
+    # -------------------------------------------------------------------------
+    # 30b. debitocomplessivocontratto - Row 39 AC / Row 36 MAPPATURE_BDAP
+    # -------------------------------------------------------------------------
+    'debitocomplessivocontratto': {
+        'cell_ref': 'E25',
+        'dynamic_resolver': 'indebitamento_debito_contratto',
+        'expected_label': [
+            "3) Debito complessivo contratto nell'esercizio",
+            "Debito complessivo contratto nell'esercizio",
+            "Debito complessivo contratto",
+        ],
+        'optional': True,
+        'sheet_name_contains': [
+            'DATI INDEBITAMENTO',
+            'INDEBITAMENTO_DATI',
+            'SEZ. IV -INDEBITAMENTO_DATI _',
+            'SEZ. IV -INDEBITAMENTO_DATI',
+            'SEZ. III - INDEB.-FINANZ. DER._',
+            'SEZ. III - INDEB.-FINANZ. DER.',
+        ],
+        'source_workbook': 'questionario',
+    },
+
+    # -------------------------------------------------------------------------
+    # 30c. contrazionenuovimutui (Legacy alias for debitocomplessivocontratto)
     # -------------------------------------------------------------------------
     'contrazionenuovimutui': {
         'cell_ref': 'E25',
-        'check_year_in_label': True,
-        'expected_label': '3) Debito complessivo contratto',
-        'fallback_cell_refs': [
-            'F25',
-        ],
-        'label_check_cells': [
-            'A25',
-            'A25:C25',
+        'dynamic_resolver': 'indebitamento_debito_contratto',
+        'expected_label': [
+            "3) Debito complessivo contratto nell'esercizio",
+            "Debito complessivo contratto nell'esercizio",
+            "3) Debito complessivo contratto",
+            "CONTRAZIONE NUOVI MUTUI",
         ],
         'optional': True,
-        'row_tolerance': 10,
         'sheet_name_contains': [
+            'DATI INDEBITAMENTO',
+            'INDEBITAMENTO_DATI',
             'SEZ. IV -INDEBITAMENTO_DATI _',
             'SEZ. IV -INDEBITAMENTO_DATI',
+            'SEZ. III - INDEB.-FINANZ. DER._',
+            'SEZ. III - INDEB.-FINANZ. DER.',
         ],
         'source_workbook': 'questionario',
-        'static_column': True,
-        'strict_expected_label': False,
     },
 
     # -------------------------------------------------------------------------

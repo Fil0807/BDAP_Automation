@@ -7,10 +7,17 @@ from typing import Callable, Optional
 
 from openpyxl import load_workbook
 
+import re
+from decimal import Decimal
+from openpyxl.utils import get_column_letter
+
 from ..core.automation_fcde import populate_fcde_sheet
 from ..core.automation_piano_indicatori import populate_piano_indicatori_sheet
 from ..core.automation import fill_accounting_analysis
 from ..core.automation_search import find_sheet, find_year_column
+from ..core.automation_anagrafica import populate_anagrafica_sheet
+from ..core.automation_questionario import _discover_questionario_workbook
+from ..support.value_formatter import coerce_numeric, format_value_italian
 from ..support.controlli_post import (
     collect_controlli_post_report,
     format_controlli_post_summary,
@@ -21,12 +28,13 @@ from ..support.conclusioni import (
     detect_population,
     write_conclusioni_sheet,
 )
-from ..support.comment_builder import fix_all_comments_in_workbook
+from ..support.comment_builder import fix_all_comments_in_workbook, create_source_comment
 from ..support.text_utils import _coerce_year_value
 from .cli_discovery import (
     discover_bdap_files_by_year,
     infer_bdap_dir,
     infer_new_analysis_path,
+    normalize_token,
     resolve_base_dir_for_comune,
 )
 
@@ -208,8 +216,20 @@ def run_pipeline(
     validate_inputs(args)
     _prepare_output_from_source(args, log)
 
+    DEDICATED_SHEET_NAMES = {
+        "anagrafica",
+        "fcde",
+        "pianoindicatori",
+        "controllipost",
+        "mappaturebdap",
+        "conclusioni",
+    }
     output_workbook = load_workbook(args.output, read_only=True)
-    sheets_to_process = list(output_workbook.sheetnames) if getattr(args, "all_sheets", False) else [args.analysis_sheet]
+    all_sheet_names = list(output_workbook.sheetnames)
+    sheets_to_process = [
+        s for s in all_sheet_names
+        if normalize_token(s) not in DEDICATED_SHEET_NAMES
+    ] if getattr(args, "all_sheets", False) else [args.analysis_sheet]
     output_workbook.close()
 
     source_analysis = args.template if getattr(args, "template", None) else args.analysis
@@ -361,6 +381,12 @@ def run_pipeline(
                 except Exception:
                     pass
 
+    # Sincronizza formule e valori tra ANALISI CONTABILE ed FCDE (righe 6, 7, 8 in FCDE, righe 25, 26 in AC)
+    try:
+        sync_fcde_and_analisi_contabile(args.output, years_to_process, log=log)
+    except Exception as exc:
+        log(f"Avviso: sincronizzazione FCDE / ANALISI CONTABILE non riuscita: {exc}")
+
     log(f"Final populated output: {args.output}")
     emit_progress(total_steps, total_steps, "Compilazione completata")
 
@@ -368,6 +394,43 @@ def run_pipeline(
         log("\nPopulation summary by year:")
         for year, updated, unresolved in summary:
             log(f"- {year}: updated={updated}, unresolved={unresolved}")
+
+    # Rileva directory di ricerca documenti limitatamente alla cartella del comune
+    comune_root = args.output.parent
+    if getattr(args, "comune", None) and getattr(args, "workspace_root", None):
+        try:
+            comune_root = resolve_base_dir_for_comune(args.workspace_root, args.comune)
+        except Exception:
+            comune_root = args.output.parent
+
+    search_dirs: list[Path] = [comune_root]
+    if getattr(args, "bdap_dir", None) and args.bdap_dir.exists():
+        search_dirs.append(args.bdap_dir)
+
+    # Popola foglio ANAGRAFICA se presente nel template
+    questionario_by_year: dict[int, Path] = {}
+    for y, b_path in bdap_by_year.items():
+        q_path = _discover_questionario_workbook(b_path, y)
+        if q_path is not None:
+            questionario_by_year[y] = q_path
+
+    for sdir in search_dirs:
+        if sdir.exists():
+            for q_file in sdir.rglob("*.xlsx"):
+                if q_file.name.startswith("~$") or q_file.name.startswith("._") or "__MACOSX" in q_file.parts:
+                    continue
+                if "questionario" in q_file.name.lower():
+                    y_matches = re.findall(r"(202\d)", q_file.name)
+                    if y_matches:
+                        y_int = int(y_matches[-1])
+                        if y_int not in questionario_by_year:
+                            questionario_by_year[y_int] = q_file
+
+    if questionario_by_year:
+        try:
+            populate_anagrafica_sheet(args.output, questionario_by_year, log=log)
+        except Exception as exc:
+            log(f"Avviso durante la compilazione del foglio ANAGRAFICA: {exc}")
 
     controlli_report = collect_controlli_post_report(args.output.parent, years=years_to_process)
     args.controlli_post_report = controlli_report
@@ -378,28 +441,101 @@ def run_pipeline(
         log("")
         log(format_controlli_post_summary(controlli_report))
 
-    # Aggiorna il foglio CONCLUSIONI (C2: comune, C3: abitanti)
-    search_dirs: list[Path] = [args.output.parent]
-    if args.output.parent.parent and args.output.parent.parent.exists():
-        search_dirs.append(args.output.parent.parent)
-    if getattr(args, "bdap_dir", None) and args.bdap_dir.exists():
-        search_dirs.append(args.bdap_dir)
-        if args.bdap_dir.parent and args.bdap_dir.parent.exists():
-            search_dirs.append(args.bdap_dir.parent)
+    # Aggiorna il foglio CONCLUSIONI (solo se presente in eventuali template legacy)
+    has_conclusioni = False
+    try:
+        check_wb = load_workbook(args.output, read_only=True)
+        has_conclusioni = any(s.strip().upper() == "CONCLUSIONI" for s in check_wb.sheetnames)
+        check_wb.close()
+    except Exception:
+        has_conclusioni = False
 
-    latest_year = max(years_to_process) if years_to_process else None
-    comune_name = detect_comune_name(
-        search_dirs=search_dirs,
-        bdap_files=bdap_by_year,
-        fallback_comune=getattr(args, "comune", None),
-    )
-    population = detect_population(
-        search_dirs=search_dirs,
-        target_year=latest_year,
-    )
-    write_conclusioni_sheet(
-        workbook_path=args.output,
-        comune_name=comune_name,
-        population=population,
-        log=log,
-    )
+    if has_conclusioni:
+        latest_year = max(years_to_process) if years_to_process else None
+        comune_name = detect_comune_name(
+            search_dirs=search_dirs,
+            bdap_files=bdap_by_year,
+            fallback_comune=getattr(args, "comune", None),
+        )
+        population = detect_population(
+            search_dirs=search_dirs,
+            target_year=latest_year,
+        )
+        write_conclusioni_sheet(
+            workbook_path=args.output,
+            comune_name=comune_name,
+            population=population,
+            log=log,
+        )
+
+
+def sync_fcde_and_analisi_contabile(
+    workbook_path: Path,
+    years: list[int],
+    log: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Sincronizza bidirezionalmente FCDE e ANALISI CONTABILE."""
+    wb = load_workbook(workbook_path)
+    try:
+        ws_ac = find_sheet(wb, "ANALISI CONTABILE")
+        ws_fcde = find_sheet(wb, "FCDE")
+        if ws_ac is None or ws_fcde is None:
+            return
+
+        for year in years:
+            ac_col = find_year_column(ws_ac, year, max_header_rows=3)
+            fcde_col = find_year_column(ws_fcde, year, max_header_rows=3)
+            if ac_col is None or fcde_col is None:
+                continue
+
+            ac_col_letter = get_column_letter(ac_col)
+            fcde_col_letter = get_column_letter(fcde_col)
+
+            # 1. Legge Parte disponibile da AC riga 19
+            parte_disp_val = ws_ac.cell(row=19, column=ac_col).value
+            parte_disp_num = coerce_numeric(parte_disp_val) or Decimal("0")
+
+            # 2. Aggiorna FCDE riga 6 con formula collegata ad AC
+            cell_fcde_6 = ws_fcde.cell(row=6, column=fcde_col)
+            cell_fcde_6.value = f"='ANALISI CONTABILE'!{ac_col_letter}19"
+
+            # 3. Legge FCDE riga 2 (Importo FCDE) e riga 5 (Totale residui EP)
+            fcde_imp = coerce_numeric(ws_fcde.cell(row=2, column=fcde_col).value) or Decimal("0")
+            fcde_tot = coerce_numeric(ws_fcde.cell(row=5, column=fcde_col).value)
+
+            # 4. Aggiorna FCDE riga 8 (% FCDE+parte disponibile) e riga 9 (METODO)
+            cell_fcde_8 = ws_fcde.cell(row=8, column=fcde_col)
+            cell_fcde_8.value = f"=({fcde_col_letter}2+{fcde_col_letter}6)/{fcde_col_letter}5*100"
+            ws_fcde.cell(row=9, column=fcde_col).value = "ordinario"
+
+            pct_plus_disp = None
+            if fcde_tot not in (None, Decimal("0")):
+                pct_plus_disp = ((fcde_imp + parte_disp_num) * Decimal("100")) / fcde_tot
+
+            # 5. Sincronizza su ANALISI CONTABILE riga 25 e riga 26
+            cell_fcde_7 = ws_fcde.cell(row=7, column=fcde_col)
+            val_7 = coerce_numeric(cell_fcde_7.value)
+            if val_7 is not None:
+                ws_ac.cell(row=25, column=ac_col).value = format_value_italian(val_7)
+                if not ws_ac.cell(row=25, column=ac_col).comment:
+                    ws_ac.cell(row=25, column=ac_col).comment = create_source_comment(
+                        source_file_name="Template_Analisi.xlsx",
+                        sheet_name="FCDE",
+                        cell_ref=f"FCDE!{fcde_col_letter}7",
+                    )
+
+            if pct_plus_disp is not None:
+                ws_ac.cell(row=26, column=ac_col).value = format_value_italian(pct_plus_disp)
+                if not ws_ac.cell(row=26, column=ac_col).comment:
+                    ws_ac.cell(row=26, column=ac_col).comment = create_source_comment(
+                        source_file_name="Template_Analisi.xlsx",
+                        sheet_name="FCDE",
+                        cell_ref=f"FCDE!{fcde_col_letter}8",
+                    )
+
+        fix_all_comments_in_workbook(wb)
+        wb.save(workbook_path)
+        if log:
+            log("FCDE e ANALISI CONTABILE sincronizzati con successo.")
+    finally:
+        wb.close()

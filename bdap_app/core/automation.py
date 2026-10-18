@@ -37,6 +37,7 @@ from ..support.comment_builder import (
 from .automation_fcde import (
     populate_fcde_sheet_in_workbook,
     read_fcde_percentage_from_workbook,
+    read_fcde_percentage_plus_disponibile_from_workbook,
     read_fcde_totale_from_workbook,
     _resolve_fcde_ratio_from_source,
 )
@@ -152,11 +153,43 @@ def _is_manual_review_only_label(normalized_row_label: str) -> bool:
     return False
 
 
-def _resolve_special_source_entry(normalized_row_label: str, sources: Optional[dict[str, dict]] = None) -> tuple[Optional[str], Optional[dict]]:
+def _resolve_special_source_entry(
+    normalized_row_label: str,
+    sources: Optional[dict[str, dict]] = None,
+    source_hint: Optional[str] = None,
+    row_idx: Optional[int] = None,
+) -> tuple[Optional[str], Optional[dict]]:
     """Risolve la regola di sorgente speciale e restituisce la chiave e la mappatura della sorgente."""
     if not normalized_row_label:
         return None, None
     mapping_sources = sources or {}
+
+    # Disambiguazione righe omonime (ANTICIPAZIONE TESORERIA e FAL)
+    hint_norm = normalize_text(source_hint or "")
+    if "anticipazionetesoreria" in normalized_row_label:
+        if "questionario" in hint_norm or (row_idx is not None and row_idx == 33):
+            if "anticipazionetesoreriaquestionario" in mapping_sources:
+                return "anticipazionetesoreriaquestionario", mapping_sources["anticipazionetesoreriaquestionario"]
+        elif "rend" in hint_norm or "bdap" in hint_norm or (row_idx is not None and row_idx == 32):
+            if "anticipazionetesoreria" in mapping_sources:
+                return "anticipazionetesoreria", mapping_sources["anticipazionetesoreria"]
+
+    if normalized_row_label == "fal":
+        if "questionario" in hint_norm or (row_idx is not None and row_idx == 37):
+            if "falquestionario" in mapping_sources:
+                return "falquestionario", mapping_sources["falquestionario"]
+        elif "rend" in hint_norm or "bdap" in hint_norm or (row_idx is not None and row_idx == 36):
+            if "fal" in mapping_sources:
+                return "fal", mapping_sources["fal"]
+
+    if "importononrestituito" in normalized_row_label:
+        if "importononrestituitoanticipazione" in mapping_sources:
+            return "importononrestituitoanticipazione", mapping_sources["importononrestituitoanticipazione"]
+
+    if "incidenza" in normalized_row_label and any(k in normalized_row_label for k in ("primi3", "primitre", "primi3titoli", "primitretitoli")):
+        if "incidenzaprime3titoli" in mapping_sources:
+            return "incidenzaprime3titoli", mapping_sources["incidenzaprime3titoli"]
+
     if normalized_row_label in mapping_sources:
         return normalized_row_label, mapping_sources[normalized_row_label]
 
@@ -185,7 +218,9 @@ def _resolve_special_source_entry(normalized_row_label: str, sources: Optional[d
         if not _source_matches_row_context(key):
             continue
         key_norm = normalize_text(key)
-        if key_norm in normalized_row_label or normalized_row_label in key_norm:
+        if key_norm in normalized_row_label:
+            return key, source
+        if normalized_row_label in key_norm and len(normalized_row_label) >= 0.65 * len(key_norm):
             return key, source
 
     # 2. Fallback fuzzy matching con punteggio di similarità e sovrapposizione token, per gestire etichette simili.
@@ -398,6 +433,7 @@ def fill_accounting_analysis(
         reference_text = ws_analysis.cell(row=row_idx, column=reference_col).value
         row_label = extract_row_label(ws_analysis, row_idx)
         normalized_row_label = normalize_text(row_label)
+        fonte_dati_val = ws_analysis.cell(row=row_idx, column=11).value if ws_analysis.max_column >= 11 else None
 
         parsed = parse_reference(reference_text)
         if not parsed:
@@ -408,7 +444,12 @@ def fill_accounting_analysis(
         if row_idx == 1 and normalized_row_label in {"voce", "anno", "descrizione", "riferimento", "label"}:
             continue
 
-        special_key, special_source = _resolve_special_source_entry(normalized_row_label, special_sources)
+        special_key, special_source = _resolve_special_source_entry(
+            normalized_row_label,
+            special_sources,
+            source_hint=str(fonte_dati_val or ""),
+            row_idx=row_idx,
+        )
         use_special_source = special_source is not None
         source_workbook = normalize_text(special_source.get("source_workbook", "rendiconto")) if use_special_source else "rendiconto"
 
@@ -528,7 +569,27 @@ def fill_accounting_analysis(
                             target_cell.comment = create_source_comment(
                                 source_file_name=bdap_path.name,
                                 sheet_name="FCDE",
-                                cell_ref=fcde_cell_ref or "FCDE!I6",
+                                cell_ref=fcde_cell_ref or "FCDE!I7",
+                            )
+                        updated_rows += 1
+                        continue
+                    if special_source.get("optional", False):
+                        mark_unresolved(target_cell, f"No value found for {special_key or row_label}")
+                        continue
+
+                if special_key == "fcdepluspartedisponibile":
+                    fcde_value, fcde_cell_ref = read_fcde_percentage_plus_disponibile_from_workbook(wb_analysis, year)
+                    if fcde_value is not None:
+                        formatted_value = format_value_italian(
+                            fcde_value,
+                            percent=bool(special_source.get("is_percentage", False)),
+                        )
+                        target_cell.value = formatted_value
+                        if keep_source_reference and bdap_path is not None:
+                            target_cell.comment = create_source_comment(
+                                source_file_name=bdap_path.name,
+                                sheet_name="FCDE",
+                                cell_ref=fcde_cell_ref or "FCDE!I8",
                             )
                         updated_rows += 1
                         continue
