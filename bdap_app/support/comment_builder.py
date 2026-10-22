@@ -173,9 +173,12 @@ def create_source_comment(
         lines.append(f"• File:   {source_file_name}")
     if sheet_name:
         lines.append(f"• Foglio: {sheet_name}")
-    if cell_ref:
+    if cell_ref and str(cell_ref).strip() not in ("DEFAULT_IF_MISSING", "DEFAULT", "CALCULATED", "NONE"):
         formatted_cell = format_cell_coordinate(cell_ref)
-        lines.append(f"• Cella:  {formatted_cell}")
+        if formatted_cell:
+            lines.append(f"• Cella:  {formatted_cell}")
+    elif cell_ref and str(cell_ref).strip() in ("DEFAULT_IF_MISSING", "DEFAULT") and not detail:
+        detail = "voce non rilevata nella sorgente (valore predefinito)"
     if label:
         lines.append(f"• Voce:   {label}")
     if detail:

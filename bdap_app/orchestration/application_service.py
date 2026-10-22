@@ -53,8 +53,8 @@ class BdapApplicationService:
         discovered = discover_bdap_files_by_year(bdap_dir)
         default_bdap = next(iter(discovered.values()), bdap_dir / "Rend.xlsx")
 
-        # Always compile starting from the project template to avoid
-        # reusing previously compiled analysis workbooks.
+        # Compila sempre a partire dal template del progetto per evitare
+        # di riutilizzare cartelle di lavoro di analisi precedentemente compilate.
         template = resolve_default_template_path(
             workspace_root=request.workspace_root,
             project_root=self.project_root,
@@ -74,7 +74,7 @@ class BdapApplicationService:
         selected_years = tuple(sorted(set(int(year) for year in request.selected_years)))
         years_arg = ",".join(str(year) for year in selected_years) if selected_years else None
 
-        # Build argparse.Namespace to pass to pipeline, ensuring all necessary fields are populated.
+        # Costruisce argparse.Namespace da passare alla pipeline, assicurando che tutti i campi necessari siano valorizzati.
         args = argparse.Namespace()
         args.workspace_root = request.workspace_root
         args.comune = comune

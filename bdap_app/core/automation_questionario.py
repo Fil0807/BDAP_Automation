@@ -409,20 +409,42 @@ def resolve_dynamic_sanzioni_cds_cell(ws, year: int) -> Optional[tuple[int, int,
 def resolve_dynamic_anticipazione_cassa_cell(ws, year: int, item_key: str) -> Optional[tuple[int, int, str]]:
     """Risolve dinamicamente la cella per la tabella cassa (anticipazione di tesoreria)."""
     target_row = None
-    for r in range(1, min(ws.max_row or 1, 100)):
-        for c in range(1, min(ws.max_column or 1, 5) + 1):
-            v = str(ws.cell(row=r, column=c).value or '').lower()
-            if item_key == 'somma' and any(k in v for k in ('somma delle entrate da anticipazioni', 'anticipazione complessivamente concedibile', 'anticipazione complessivamente concessa')):
-                target_row = r
+    if item_key == 'somma':
+        for r in range(1, min(ws.max_row or 1, 100)):
+            for c in range(1, min(ws.max_column or 1, 5) + 1):
+                v = str(ws.cell(row=r, column=c).value or '').lower()
+                if 'somma delle entrate da anticipazioni' in v:
+                    target_row = r
+                    break
+            if target_row:
                 break
-            elif item_key == 'giorni' and "giorni di utilizzo dell'anticipazione" in v:
-                target_row = r
+        if not target_row:
+            for r in range(1, min(ws.max_row or 1, 100)):
+                for c in range(1, min(ws.max_column or 1, 5) + 1):
+                    v = str(ws.cell(row=r, column=c).value or '').lower()
+                    if any(k in v for k in ('anticipazione complessivamente concedibile', 'anticipazione complessivamente concessa')):
+                        target_row = r
+                        break
+                if target_row:
+                    break
+    elif item_key == 'giorni':
+        for r in range(1, min(ws.max_row or 1, 100)):
+            for c in range(1, min(ws.max_column or 1, 5) + 1):
+                v = str(ws.cell(row=r, column=c).value or '').lower()
+                if "giorni di utilizzo dell'anticipazione" in v:
+                    target_row = r
+                    break
+            if target_row:
                 break
-            elif item_key == 'non_restituito' and ('non restituita al 31' in v or 'non restituito al 31' in v):
-                target_row = r
+    elif item_key == 'non_restituito':
+        for r in range(1, min(ws.max_row or 1, 100)):
+            for c in range(1, min(ws.max_column or 1, 5) + 1):
+                v = str(ws.cell(row=r, column=c).value or '').lower()
+                if 'non restituita al 31' in v or 'non restituito al 31' in v:
+                    target_row = r
+                    break
+            if target_row:
                 break
-        if target_row:
-            break
 
     if not target_row:
         return None
@@ -859,7 +881,7 @@ def _discover_questionario_workbook(bdap_path: Optional[Path], year: int, specia
             # Se non trovato con year_cell_ref, scansione standard nelle prime 10 righe
             if not found_year:
                 for r in range(1, 11):
-                    # ws_temp.max_column can be None in read_only mode; fall back to 12
+                    # ws_temp.max_column può essere None in modalità sola lettura; fallback a 12
                     try:
                         max_col = ws_temp.max_column if ws_temp.max_column is not None else 12
                     except Exception:
@@ -928,7 +950,7 @@ def _discover_questionario_workbook(bdap_path: Optional[Path], year: int, specia
             seen_roots.add(resolved)
             unique_roots.append(root)
     else:
-        # Start from the BDAP directory and expand only to nearby parent folders.
+        # Parte dalla cartella BDAP ed espande la ricerca solo alle cartelle genitore adiacenti.
         candidate_roots: list[Path] = [base_dir]
         try:
             if base_dir.parent.exists() and base_dir.parent.is_dir():
@@ -938,14 +960,14 @@ def _discover_questionario_workbook(bdap_path: Optional[Path], year: int, specia
         except Exception:
             pass
 
-        # If the BDAP is in a folder named 'datibdap', also consider its parent
+        # Se il file BDAP si trova in una cartella denominata 'datibdap', considera anche il genitore
         try:
             if normalize_text(base_dir.name) == "datibdap" and base_dir.parent.exists() and base_dir.parent.is_dir():
                 candidate_roots.append(base_dir.parent)
         except Exception:
             pass
 
-        # Preserve order and remove duplicates
+        # Preserva l'ordine e rimuove i duplicati
         unique_roots = []
         seen_roots: set[Path] = set()
         for root in candidate_roots:
@@ -1035,12 +1057,12 @@ def process_questionario_row(
 
     Returns (handled: bool, delta_rows: int, wb_questionario, wb_questionario_formula, questionario_path_cache, resolved_numeric_tuple|None)
     """
-    # Load cached workbooks
+    # Carica le cartelle di lavoro dalla cache
     wb_questionario, wb_questionario_formula, questionario_path_cache = _load_questionario_workbooks(
         bdap_path, year, special_key, workbook_cache=workbook_cache
     )
 
-    # No workbook found
+    # Nessuna cartella di lavoro trovata
     if wb_questionario is None:
         if special_key in QUESTIONARIO_ACTIVE_SPECIAL_KEYS:
             _clear_questionario_manual_cell(target_cell)
@@ -1055,7 +1077,7 @@ def process_questionario_row(
     questionario_formula_wb = wb_questionario_formula
     source_file_name = questionario_path_cache.name if questionario_path_cache is not None else (bdap_path.name if bdap_path is not None else "n/d")
 
-    # For contrazionenuovimutui and debt items prefer questionario files that include the target year in the filename.
+    # Per contrazionenuovimutui e voci di debito preferisci file del questionario che includono l'anno target nel nome.
     if special_key in ("contrazionenuovimutui", "debitocomplessivocontratto", "incidenzaprime3titoli") and questionario_path_cache is not None:
         try:
             years_in_name = {int(m) for m in re.findall(r"(19\d{2}|20\d{2})", questionario_path_cache.name)}
@@ -1070,7 +1092,7 @@ def process_questionario_row(
             # Continua la risoluzione di altre celle 
             return False, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
 
-    # Resolve sheet by name contains / idx
+    # Risolve il foglio tramite corrispondenza nome o indice
     ws_bdap_src = _resolve_questionario_sheet(source_wb, data_source_mapping)
     has_display_fallback = bool(data_source_mapping.get("fallback_display_refs")) and "display_refs" in data_source_mapping
 
@@ -1082,10 +1104,10 @@ def process_questionario_row(
             target_cell.value = None
             target_cell.comment = None
             return True, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
-        # No sheet found -> let caller treat as not handled
+        # Nessun foglio trovato -> lascia che il chiamante lo gestisca come non gestito
         return False, 0, wb_questionario, questionario_formula_wb, questionario_path_cache, None
 
-    # Value extraction (subset of logic to mirror automation.py behavior)
+    # Estrazione del valore (logica speculare ad automation.py)
     value = None
     actual_cell_ref = None
 
@@ -1118,7 +1140,7 @@ def process_questionario_row(
             value, actual_cell_ref = find_bdap_value_with_fallback(ws_bdap_src, option["cell_ref"], max_offset=row_tol)
 
     elif "display_refs" in data_source_mapping:
-        # Handle cases like residui where multiple titled cells need to be displayed
+        # Gestisce casi come i residui in cui devono essere visualizzate più celle con titolo
         display_refs = data_source_mapping["display_refs"]
         use_static_refs = parse_bool_flag(data_source_mapping.get("static_column"), default=False)
         row_tol = max(0, _coerce_int_or_default(data_source_mapping.get("row_tolerance", 2), 2))
@@ -1203,7 +1225,7 @@ def process_questionario_row(
                                 y_col = None
 
                     if not use_static_refs and y_col is None:
-                        # try resolving by scanning nearby header rows
+                        # prova a risolvere scansionando le righe di intestazione vicine
                         try:
                             y_col = _resolve_questionario_year_column(ws_bdap_src, year, target_row, start_col=4)
                         except Exception:
@@ -1304,7 +1326,7 @@ def process_questionario_row(
         return True, 1, wb_questionario, questionario_formula_wb, questionario_path_cache, None
 
     elif "cell_refs" in data_source_mapping and "cell_ref" not in data_source_mapping:
-        # Handle cell_refs (list) without a singular cell_ref
+        # Gestisce cell_refs (lista) in assenza di un singolo cell_ref
         row_tol = max(0, _coerce_int_or_default(data_source_mapping.get("row_tolerance", 1), 1))
         expected_label = data_source_mapping.get("expected_label")
         label_check_cells = data_source_mapping.get("label_check_cells")
@@ -1320,7 +1342,7 @@ def process_questionario_row(
             value = vals[0] if len(vals) == 1 else "\n".join(str(v) for v in vals)
             actual_cell_ref = ";".join(refs)
         elif expected_label:
-            # fallback: try finding the row by label and reading those cells
+            # fallback: prova a individuare la riga tramite etichetta e legge quelle celle
             label_text = expected_label[0] if isinstance(expected_label, list) else str(expected_label)
             found_row = find_nearby_title_row(
                 ws_bdap_src, label_text,
@@ -1494,7 +1516,7 @@ def process_questionario_row(
                     if check_ref:
                         r_idx, _ = coordinate_to_tuple(check_ref)
                         found_year = False
-                        # scan first 6 columns of that row for a year matching target
+                        # scansiona le prime 6 colonne della riga per trovare un anno corrispondente al target
                         for c in range(1, min(ws_bdap_src.max_column or 6, 6) + 1):
                             try:
                                 cell_val = ws_bdap_src.cell(row=r_idx, column=c).value
@@ -1512,10 +1534,10 @@ def process_questionario_row(
                     pass
 
     else:
-        # default: by label
+        # impostazione predefinita: tramite etichetta
         value, actual_cell_ref = find_bdap_value_by_label(ws_bdap_src, data_source_mapping.get("label"))
 
-    # Fallback formula resolution
+    # Risoluzione di fallback tramite formula
     if coerce_numeric(value) in (None, 0) and questionario_formula_wb is not None:
         current_num = coerce_numeric(value)
         if current_num in (None, 0):

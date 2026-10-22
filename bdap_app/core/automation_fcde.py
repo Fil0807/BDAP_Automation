@@ -194,7 +194,24 @@ def populate_fcde_sheet_in_workbook(
     keep_source_reference: bool = True,
     log: Optional[Callable[[str], None]] = None,
 ) -> tuple[Optional[Decimal], Optional[str]]:
-    """Compila il foglio FCDE nel workbook già caricato."""
+    """Compila le celle dell'anno specificato nel foglio FCDE del workbook fornito in memoria.
+
+    Estrae l'importo dell'accantonamento FCDE e i residui attivi di Titolo I e Titolo III
+    dal rendiconto BDAP, calcola il totale dei residui, imposta la formula di collegamento
+    alla parte disponibile dell'avanzo (riga 19 di ANALISI CONTABILE) e calcola la percentuale
+    ordinaria di copertura.
+
+    Args:
+        wb_analysis: Istanza di :class:`openpyxl.Workbook` del modello di analisi.
+        bdap_path: Percorso del file Excel di rendiconto BDAP per l'anno specificato.
+        year: Anno contabile da compilare.
+        keep_source_reference: Se ``True``, genera e assegna i commenti di tracciabilità.
+        log: Funzione di log opzionale per registrare i passaggi eseguiti.
+
+    Returns:
+        Tupla ``(percentuale, riferimento_cella)`` con la percentuale FCDE calcolata
+        e le coordinate della cella (es. ``'FCDE!D7'``), oppure ``(None, None)`` se non risolta.
+    """
     if bdap_path is None:
         return None, None
 
@@ -298,7 +315,18 @@ def populate_fcde_sheet_in_workbook(
 
 
 def read_fcde_percentage_plus_disponibile_from_workbook(wb_analysis, year: int) -> tuple[Optional[Decimal], Optional[str]]:
-    """Legge la percentuale combinata FCDE + parte disponibile dal foglio FCDE."""
+    """Legge la percentuale combinata FCDE + parte disponibile dal foglio FCDE.
+
+    Se il valore numerico non è già presente, calcola dinamicamente il rapporto:
+    ``(Importo FCDE + Parte Disponibile) / Totale Residui EP * 100``.
+
+    Args:
+        wb_analysis: Istanza di :class:`openpyxl.Workbook`.
+        year: Anno contabile da verificare.
+
+    Returns:
+        Tupla ``(valore_percentuale, coordinata_cella)`` oppure ``(None, coordinata)`` se non calcolabile.
+    """
     if FCDE_SHEET_NAME not in wb_analysis.sheetnames:
         return None, None
     ws_fcde = wb_analysis[FCDE_SHEET_NAME]
@@ -325,7 +353,21 @@ def populate_fcde_sheet(
     keep_source_reference: bool = True,
     log: Optional[Callable[[str], None]] = None,
 ) -> tuple[Optional[Decimal], Optional[str]]:
-    """Compila il foglio FCDE direttamente su disco."""
+    """Compila il foglio FCDE caricando e salvando il file direttamente su disco.
+
+    Incapusla :func:`populate_fcde_sheet_in_workbook`, corregge i commenti OpenPyXL
+    e salva il workbook su ``analysis_path``.
+
+    Args:
+        analysis_path: Percorso del file Excel di output su disco.
+        bdap_path: Percorso del rendiconto BDAP dell'anno di riferimento.
+        year: Anno contabile da compilare.
+        keep_source_reference: Se ``True``, genera i commenti di tracciabilità.
+        log: Funzione di log opzionale.
+
+    Returns:
+        Tupla ``(percentuale, coordinata_cella)``.
+    """
     wb_analysis = load_workbook(analysis_path)
     try:
         result = populate_fcde_sheet_in_workbook(

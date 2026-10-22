@@ -38,8 +38,18 @@ GENERIC_COMUNE_VALUE_TOKENS = {
 
 
 def _parse_two_digit_year_from_stem(stem: str) -> Optional[int]:
-    # Accetta token anno corto (YY) solo per nomi file BDAP-like e lo mappa a 20YY.
-    # Esempio: "Rend. 26.xlsx" -> 2026.
+    """Accetta token anno corto (YY) solo per nomi file BDAP-like e lo mappa a 20YY.
+
+    Ad esempio, converte stringhe come ``"Rend. 26.xlsx"`` nell'anno intero ``2026``.
+    Se il nome non contiene parole chiave come ``rend``, ``rendiconto`` o ``bdap``,
+    oppure se contiene più di un token a due cifre, restituisce ``None`` per evitare ambiguità.
+
+    Args:
+        stem: Nome del file senza estensione (es. ``"Rend. 26"``).
+
+    Returns:
+        L'anno a quattro cifre (es. 2026) se identificato univocamente, altrimenti ``None``.
+    """
     lower_stem = stem.lower()
     if not any(keyword in lower_stem for keyword in ("rend", "rendiconto", "bdap")):
         return None
@@ -53,7 +63,17 @@ def _parse_two_digit_year_from_stem(stem: str) -> Optional[int]:
 
 
 def normalize_token(value: str) -> str:
-    # Normalizza etichette per un matching robusto dei nomi di cartelle.
+    """Normalizza etichette e nomi rimuovendo spazi e punteggiatura per un matching robusto.
+
+    Converte l'intera stringa in minuscolo e conserva unicamente i caratteri alfanumerici
+    ASCII (a-z, 0-9).
+
+    Args:
+        value: Stringa di input (es. ``"Comune di Esempio (BG)"``).
+
+    Returns:
+        Stringa pulita e normalizzata (es. ``"comunediesempiobg"``).
+    """
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
@@ -68,7 +88,20 @@ EXCLUDED_BDAP_YEAR_FILE_TOKENS = {
 
 
 def _bdap_year_file_priority(path: Path) -> Optional[int]:
-    """Classifica i soli file annuali BDAP, escludendo workbook ausiliari."""
+    """Classifica i soli file annuali BDAP, escludendo workbook ausiliari.
+
+    Assegna un punteggio numerico di priorità (minore è il punteggio, maggiore è la priorità):
+    - 0: Nome standard esatto ``Rend. YYYY.xlsx``
+    - 1: Presenza di ``rendiconto`` nel nome
+    - 2: Presenza di ``rend`` nel nome
+    - 3: Presenza di ``bdap`` nel nome
+
+    Args:
+        path: Percorso del file da valutare.
+
+    Returns:
+        Un intero da 0 a 3 indicante la priorità, oppure ``None`` se il file deve essere escluso.
+    """
     normalized_stem = normalize_token(path.stem)
     if any(token in normalized_stem for token in EXCLUDED_BDAP_YEAR_FILE_TOKENS):
         return None
@@ -84,7 +117,17 @@ def _bdap_year_file_priority(path: Path) -> Optional[int]:
 
 
 def dedupe_paths(paths: list[Path]) -> list[Path]:
-    # Mantiene l'ordine della prima occorrenza rimuovendo duplicati di percorso.
+    """Mantiene l'ordine della prima occorrenza rimuovendo duplicati di percorsi fisici.
+
+    Normalizza e risolve i percorsi per evitare che rappresentazioni relative o simboliche
+    della medesima cartella vengano elaborate più volte.
+
+    Args:
+        paths: Lista di percorsi :class:`pathlib.Path`.
+
+    Returns:
+        Nuova lista ordinata contenente solo percorsi unici.
+    """
     unique: list[Path] = []
     seen: set[str] = set()
     for path in paths:
@@ -99,18 +142,38 @@ def dedupe_paths(paths: list[Path]) -> list[Path]:
 
 
 def _has_bdap_year_files(folder: Path) -> bool:
-    # Restituisce True se la cartella contiene direttamente file BDAP per anno.
-    # Accetta sia nomi stretti (Rend. YYYY.xlsx) che varianti con anno a 4 cifre.
+    """Verifica se la cartella specificata contiene direttamente file di rendiconto BDAP.
+
+    Accetta sia nomi rigorosi (es. ``Rend. YYYY.xlsx``) che varianti riconosciute
+    da :func:`discover_bdap_files_by_year`.
+
+    Args:
+        folder: Cartella da ispezionare.
+
+    Returns:
+        ``True`` se sono presenti file annuali BDAP validi, altrimenti ``False``.
+    """
     if not folder.exists() or not folder.is_dir():
         return False
     return bool(discover_bdap_files_by_year(folder))
 
 
 def _is_flat_bdap_folder(folder: Path) -> bool:
-    # Restituisce True se la cartella contiene Rend. YYYY.xlsx direttamente senza struttura "1 doc".
+    """Verifica se la cartella contiene file BDAP direttamente senza la sottocartella '1 doc'.
+
+    Identifica la modalità "flat" in cui l'utente ha salvato i file Excel del rendiconto
+    direttamente nella radice del comune o in una cartella dati senza la gerarchia canonica
+    ``<Comune>/1 doc/dati BDAP/``.
+
+    Args:
+        folder: Cartella da verificare.
+
+    Returns:
+        ``True`` se è una cartella piatta contenente file BDAP, altrimenti ``False``.
+    """
     if not _has_bdap_year_files(folder):
         return False
-    # Check if it has the proper comune structure (1 doc subfolder).
+    # Verifica se possiede la struttura standard del comune (sottocartella "1 doc").
     if (folder / "1 doc").exists() or any(
         p.is_dir() and normalize_token(p.name) in {"1doc", "doc1", "1documento", "documento1"}
         for p in folder.iterdir()
@@ -120,12 +183,30 @@ def _is_flat_bdap_folder(folder: Path) -> bool:
 
 
 def _clean_comune_name(raw: str) -> str:
-    # Pulisce le etichette estratte rimuovendo punteggiatura e rumore comune.
+    """Pulisce le stringhe estratte dai fogli rimuovendo punteggiatura e spazi spuri.
+
+    Args:
+        raw: Testo grezzo contenente il nome del comune.
+
+    Returns:
+        Stringa ripulita.
+    """
     cleaned = re.sub(r"\s+", " ", raw).strip(" .:-\t\n\r")
     return cleaned
 
 
 def _looks_like_real_comune_name(value: str) -> bool:
+    """Verifica se una stringa estratta somiglia al nome reale di un Ente locale.
+
+    Scarta etichette generiche di tabella come "Ente", "Denominazione", "Comune"
+    o stringhe troppo corte (meno di 3 caratteri).
+
+    Args:
+        value: Stringa candidata.
+
+    Returns:
+        ``True`` se il valore è un candidato valido come nome di comune, altrimenti ``False``.
+    """
     token = normalize_token(value)
     if not token:
         return False
@@ -137,7 +218,17 @@ def _looks_like_real_comune_name(value: str) -> bool:
 
 
 def _extract_comune_from_workbook(path: Path) -> Optional[str]:
-    # Estrae l'etichetta del comune scansionando l'area in alto a sinistra del workbook per 'COMUNE DI'.
+    """Estrae il nome dell'Ente scansionando le prime celle del rendiconto BDAP.
+
+    Cerca l'intestazione standard nella cella B7 (accanto a "Denominazione ente" in A7)
+    o mediante pattern regex per frasi come "COMUNE DI ..." nei primi tre fogli.
+
+    Args:
+        path: Percorso del file Excel di rendiconto.
+
+    Returns:
+        Il nome del comune estratto, oppure ``None`` se non individuato.
+    """
     try:
         wb = load_workbook(path, data_only=True, read_only=True)
     except Exception:
@@ -204,13 +295,25 @@ def _extract_comune_from_workbook(path: Path) -> Optional[str]:
 
 
 def infer_comune_name_from_bdap_dir(folder: Path) -> Optional[str]:
-    # Inferisce il nome del comune dai workbook BDAP annuali quando è selezionata solo una cartella dati BDAP piatta.
+    """Inferisce il nome del comune analizzando i rendiconti BDAP presenti in una cartella piatta.
+
+    Viene impiegata quando l'utente seleziona direttamente una cartella contenente i file
+    del rendiconto senza una directory nominale genitore. Ispeziona i primi 3 file annuali
+    tramite :func:`_extract_comune_from_workbook` e, in caso di esito negativo, effettua un fallback
+    sul nome della cartella padre.
+
+    Args:
+        folder: Percorso della cartella contenente i file BDAP.
+
+    Returns:
+        Il nome del comune se rilevato, altrimenti ``None``.
+    """
     if not _is_flat_bdap_folder(folder):
         return None
 
-    # Use discover_bdap_files_by_year to get only actual BDAP files (not analysis files)
+    # Usa discover_bdap_files_by_year per ottenere solo file BDAP effettivi (non file di analisi)
     bdap_files = discover_bdap_files_by_year(folder)
-    for year in sorted(bdap_files.keys())[:3]:  # Try first 3 years
+    for year in sorted(bdap_files.keys())[:3]:  # Prova i primi 3 anni
         workbook_path = bdap_files[year]
         comune_name = _extract_comune_from_workbook(workbook_path)
         if comune_name:
@@ -226,7 +329,21 @@ def infer_comune_name_from_bdap_dir(folder: Path) -> Optional[str]:
 
 
 def infer_new_analysis_path(base_dir: Path) -> Path:
-    # Risolve il file di analisi "Nuovo Modello" più probabile nella directory base.
+    """Risolve il percorso del file di analisi 'Nuovo Modello' nella directory del comune.
+
+    Cerca in ordine di preferenza:
+    1. ``<base_dir>/Analisi Nuovo Modello.xlsx``
+    2. Eventuali file ``Analisi*.xlsx`` nella sottocartella ``2 analisi funzionaria``
+    3. File corrispondenti al pattern ``Analisi*Nuovo*Modello*.xlsx``
+    4. Qualsiasi file ``Analisi*.xlsx`` (esclusi quelli con prefisso ``REV_``)
+    5. Ricerca analoga nella cartella superiore se ``base_dir`` è una cartella piatta
+
+    Args:
+        base_dir: Directory base del comune.
+
+    Returns:
+        Il percorso :class:`pathlib.Path` del file di analisi individuato o del default atteso.
+    """
     preferred = base_dir / "Analisi Nuovo Modello.xlsx"
     if preferred.exists():
         return preferred
@@ -251,7 +368,7 @@ def infer_new_analysis_path(base_dir: Path) -> Path:
     if fallback_candidates:
         return fallback_candidates[0]
 
-    # Fallback: search in parent directory if base_dir is a flat BDAP folder
+    # Fallback: cerca nella cartella padre se base_dir e' una cartella BDAP piatta
     parent_dir = base_dir.parent
     if parent_dir.exists() and parent_dir != base_dir:
         preferred_parent = parent_dir / "Analisi Nuovo Modello.xlsx"
@@ -269,7 +386,20 @@ def infer_new_analysis_path(base_dir: Path) -> Path:
 
 
 def infer_bdap_dir(base_dir: Path) -> Path:
-    # Individua la directory di input BDAP secondo la struttura prevista o varianti normalizzate.
+    """Individua la directory dei dati BDAP secondo la gerarchia canonica o varianti note.
+
+    Verifica le seguenti posizioni:
+
+    * ``<base_dir>/1 doc/dati BDAP``
+    * La cartella ``base_dir`` stessa (se contiene direttamente file annuali BDAP)
+    * Varianti normalizzate della cartella ``1 doc`` (es. ``1doc``, ``doc1``, ``1documento``) contenenti ``datibdap``.
+
+    Args:
+        base_dir: Directory base da cui partire.
+
+    Returns:
+        Il percorso :class:`pathlib.Path` della cartella contenente i dati BDAP.
+    """
     preferred = base_dir / "1 doc" / "dati BDAP"
     if preferred.exists():
         return preferred
@@ -277,7 +407,7 @@ def infer_bdap_dir(base_dir: Path) -> Path:
     if not base_dir.exists() or not base_dir.is_dir():
         return preferred
 
-    # Support flat datasets where Rend. YYYY.xlsx files are stored directly in base_dir.
+    # Supporta dataset piatti in cui i file Rend. YYYY.xlsx sono memorizzati direttamente in base_dir.
     if _has_bdap_year_files(base_dir):
         return base_dir
 
@@ -300,36 +430,49 @@ def infer_bdap_dir(base_dir: Path) -> Path:
 
 
 def discover_comune_base_dirs(workspace_root: Path) -> list[Path]:
-    # Scopre le radici dei dataset che espongono una directory BDAP valida.
+    """Scopre tutte le radici di cartella comune valide all'interno di un workspace.
+
+    Gestisce diverse modalità di selezione:
+    1. Workspace contenente molteplici sottocartelle di comuni;
+    2. Cartella del singolo comune selezionata direttamente;
+    3. Sottocartella ``1 doc`` o ``dati BDAP`` selezionata direttamente;
+    4. Cartella piatta con file BDAP.
+
+    Args:
+        workspace_root: Directory selezionata dall'utente.
+
+    Returns:
+        Lista ordinata di percorsi :class:`pathlib.Path` corrispondenti alle basi dei comuni trovati.
+    """
     candidates: list[Path] = []
     if not workspace_root.exists() or not workspace_root.is_dir():
         return candidates
 
-    # Accept roots that already point to a dataset folder (comune level).
+    # Accetta radici che puntano gia' a una cartella di dataset (livello comune).
     workspace_bdap_dir = infer_bdap_dir(workspace_root)
     if workspace_bdap_dir.exists() and workspace_bdap_dir.is_dir():
         candidates.append(workspace_root)
 
     normalized_root_name = normalize_token(workspace_root.name)
 
-    # Accept selecting ".../<comune>/1 doc" directly.
+    # Accetta la selezione diretta di ".../<comune>/1 doc".
     if normalized_root_name in {"1doc", "doc1", "1documento", "documento1"}:
         comune_dir = workspace_root.parent
         bdap_dir = infer_bdap_dir(comune_dir)
         if bdap_dir.exists() and bdap_dir.is_dir():
             candidates.append(comune_dir)
 
-    # Accept selecting ".../<comune>/1 doc/dati BDAP" directly.
+    # Accetta la selezione diretta di ".../<comune>/1 doc/dati BDAP".
     if normalized_root_name == "datibdap":
-        # First try: is this part of a proper <comune>/1 doc/dati BDAP structure?
+        # Primo tentativo: fa parte di una struttura valida <comune>/1 doc/dati BDAP?
         doc_dir = workspace_root.parent
         comune_dir = doc_dir.parent
         if doc_dir.exists() and doc_dir.is_dir() and comune_dir.exists() and comune_dir.is_dir():
             if normalize_token(doc_dir.name) in {"1doc", "doc1", "1documento", "documento1"}:
                 candidates.append(comune_dir)
-        # Second try: is this a flat "dati BDAP" folder with BDAP files directly inside?
+        # Secondo tentativo: e' una cartella piatta "dati BDAP" con file BDAP direttamente all'interno?
         elif _has_bdap_year_files(workspace_root):
-            # Treat the "dati BDAP" folder itself as a comune
+            # Tratta la cartella "dati BDAP" stessa come un comune
             candidates.append(workspace_root)
 
     for comune_dir in sorted(p for p in workspace_root.iterdir() if p.is_dir()):
@@ -341,7 +484,22 @@ def discover_comune_base_dirs(workspace_root: Path) -> list[Path]:
 
 
 def resolve_base_dir_for_comune(workspace_root: Path, comune: str) -> Path:
-    # Risolve una radice dataset dal nome del comune con controlli di ambiguità.
+    """Risolve la cartella base di un comune dato il suo nome, gestendo eventuali ambiguità.
+
+    Confronta il nome richiesto con i nomi delle cartelle individuate e con i nomi
+    inferiti dai rendiconti BDAP.
+
+    Args:
+        workspace_root: Radice del workspace in cui cercare.
+        comune: Nome (o frazione di nome) del comune da individuare.
+
+    Returns:
+        Il percorso :class:`pathlib.Path` della cartella base del comune.
+
+    Raises:
+        ValueError: Se il parametro ``comune`` è vuoto o se corrisponde a più comuni (ambiguità).
+        FileNotFoundError: Se nessun dataset corrisponde al nome indicato o se il workspace non contiene dati.
+    """
     normalized_target = normalize_token(comune)
     if not normalized_target:
         raise ValueError("--comune cannot be empty")
@@ -356,38 +514,38 @@ def resolve_base_dir_for_comune(workspace_root: Path, comune: str) -> Path:
         )
 
     matched: list[Path] = []
-    exact_name_matches: list[Path] = []  # Prefer exact folder name matches
-    inferred_name_matches: list[Path] = []  # Fallback to inferred name matches
+    exact_name_matches: list[Path] = []  # Preferisci corrispondenze esatte con il nome della cartella
+    inferred_name_matches: list[Path] = []  # Fallback su corrispondenze con il nome inferito
     
     for path in candidates:
         folder_name_normalized = normalize_token(path.name)
         inferred_name = infer_comune_name_from_bdap_dir(path)
         inferred_name_normalized = normalize_token(inferred_name) if inferred_name else None
         
-        # Check if target matches folder name (exact match)
+        # Controlla se il target corrisponde al nome della cartella (match esatto)
         if normalized_target in folder_name_normalized or folder_name_normalized == normalized_target:
             exact_name_matches.append(path)
             matched.append(path)
-        # Check if target matches inferred name (fallback)
+        # Controlla se il target corrisponde al nome inferito (fallback)
         elif inferred_name_normalized and (normalized_target in inferred_name_normalized or inferred_name_normalized == normalized_target):
             inferred_name_matches.append(path)
             matched.append(path)
     
-    # Prioritize exact folder name matches
+    # Dai priorita' alle corrispondenze esatte con il nome della cartella
     if exact_name_matches:
         if len(exact_name_matches) == 1:
             return exact_name_matches[0]
-        # Multiple exact matches: this is truly ambiguous
+        # Corrispondenze esatte multiple: caso realmente ambiguo
         options = "\n".join(f"- {p.name}" for p in exact_name_matches)
         raise ValueError(
             f"Comune '{comune}' is ambiguous. Matching folders:\n{options}"
         )
     
-    # Fallback to inferred name matches
+    # Fallback su corrispondenze con il nome inferito
     if inferred_name_matches:
         if len(inferred_name_matches) == 1:
             return inferred_name_matches[0]
-        # Multiple inferred matches: also ambiguous
+        # Corrispondenze inferite multiple: caso anch'esso ambiguo
         options = "\n".join(f"- {p.name}" for p in inferred_name_matches)
         raise ValueError(
             f"Comune '{comune}' is ambiguous. Matching folders:\n{options}"
@@ -401,7 +559,7 @@ def resolve_base_dir_for_comune(workspace_root: Path, comune: str) -> Path:
             f"Comune '{comune}' is ambiguous. Matching folders:\n{options}"
         )
 
-    # No matches: show all options available
+    # Nessuna corrispondenza: mostra tutte le opzioni disponibili
     all_options = "\n".join(f"- {p.name}" for p in candidates)
     raise FileNotFoundError(
         f"No dataset folder matched comune '{comune}'. Available folders:\n{all_options}"
@@ -409,7 +567,17 @@ def resolve_base_dir_for_comune(workspace_root: Path, comune: str) -> Path:
 
 
 def discover_bdap_files_by_year(bdap_dir: Path) -> dict[int, Path]:
-    # Costruisce una mappa: anno -> percorso file BDAP
+    """Scansiona una cartella BDAP e mappa ciascun anno al file di rendiconto più appropriato.
+
+    Se per il medesimo anno esistono più file (es. ``Rend. 2024.xlsx`` e un generico ``BDAP_2024.xlsx``),
+    seleziona il file con priorità migliore determinata da :func:`_bdap_year_file_priority`.
+
+    Args:
+        bdap_dir: Cartella contenente i file Excel del rendiconto.
+
+    Returns:
+        Dizionario ordinato con chiavi gli anni interi e valori i percorsi dei file :class:`pathlib.Path`.
+    """
     best_by_year: dict[int, tuple[int, str, Path]] = {}
     if not bdap_dir.exists():
         return {}
@@ -422,7 +590,7 @@ def discover_bdap_files_by_year(bdap_dir: Path) -> dict[int, Path]:
         match = BDAP_YEAR_FILE_PATTERN.search(path.name)
         year: Optional[int] = None
         if match:
-            # Extract YYYY year from filename pattern like "Rend. YYYY.xlsx"
+            # Estrai l'anno YYYY dal pattern del nome file come "Rend. YYYY.xlsx"
             year = int(match.group(1))
         else:
             generic = GENERIC_YEAR_PATTERN.search(path.stem)
@@ -441,7 +609,18 @@ def resolve_default_template_path(
     workspace_root: Path,
     project_root: Optional[Path] = None,
 ) -> Optional[Path]:
-    """Resolve default template path using both project and workspace roots."""
+    """Risolve il percorso del modello di analisi Excel (Template_Analisi.xlsx).
+
+    Ricerca il template nelle radici delle risorse pacchettizzate (PyInstaller, py2app),
+    nel workspace root e nel project root.
+
+    Args:
+        workspace_root: Cartella radice del workspace.
+        project_root: Percorso facoltativo del progetto.
+
+    Returns:
+        Il percorso :class:`pathlib.Path` del template se trovato, altrimenti ``None``.
+    """
     roots: list[Path] = [workspace_root]
     
     resource_root = get_resource_root()
@@ -450,7 +629,7 @@ def resolve_default_template_path(
     if project_root is None:
         roots.insert(0, project_root)
     
-    # Remove duplicate paths while preserving order.
+    # Rimuovi percorsi duplicati preservando l'ordine.
     search_roots = dedupe_paths(roots)
 
     preferred_names = (
@@ -470,7 +649,7 @@ def resolve_default_template_path(
         if candidates:
             return candidates[0]
 
-    # If only a Google Sheets shortcut exists, suggest exported .xlsx path.
+    # Se esiste solo un collegamento a Google Sheets, suggerisci il percorso .xlsx esportato.
     for root in search_roots:
         gsheet_candidates = sorted(root.glob("Template*Analisi*Contabile*.gsheet"))
         if gsheet_candidates:
@@ -479,16 +658,21 @@ def resolve_default_template_path(
     return None
 
 
-def get_resource_root()-> Path:
-    """
-    Restituisce la cartella contenente le risorse dell'applicazione.
-    """
+def get_resource_root() -> Path:
+    """Restituisce la cartella contenente le risorse dell'applicazione.
 
+    Gestisce in modo trasparente l'esecuzione normale da sorgente Python,
+    l'esecuzione tramite pacchetto PyInstaller (``sys._MEIPASS``) e l'esecuzione
+    come bundle macOS py2app.
+
+    Returns:
+        Percorso :class:`pathlib.Path` della cartella risorse.
+    """
     # PyInstaller
     if hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
     
-    # p2app
+    # py2app
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent.parent / "Resources"
     

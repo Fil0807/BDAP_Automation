@@ -35,8 +35,21 @@ def format_source_location(sheet_name: str, cell_ref: str) -> str:
     return f"foglio {sheet_name}, riga {row_idx}, colonna {col_idx} ({cell_ref})"
 
 
-def find_bdap_value_by_label(ws_bdap, label: str, label_cache: Optional[dict] = None):
-    """Trova un valore nel foglio confrontando l'etichetta testuale."""
+def find_bdap_value_by_label(ws_bdap, label: str, label_cache: Optional[dict] = None) -> tuple[Optional[object], Optional[str]]:
+    """Trova un valore numerico nel foglio BDAP confrontando l'etichetta testuale descrittiva.
+
+    Esegue un confronto fuzzy (tramite :func:`label_match_score`) confrontando le etichette
+    presenti nelle prime colonne del foglio, e una volta individuata la riga migliore
+    scansiona orizzontalmente a destra per identificare il valore numerico associato.
+
+    Args:
+        ws_bdap: Foglio di lavoro OpenPyXL.
+        label: Testo dell'etichetta contabile ricercata.
+        label_cache: Dizionario facoltativo per memorizzare i risultati ed evitare ricerche ripetute.
+
+    Returns:
+        Tupla ``(valore, coordinata_cella)`` oppure ``(None, None)`` se nessun candidato valido viene trovato.
+    """
     target = normalize_text(label)
     if not target:
         return None, None
@@ -120,8 +133,20 @@ def find_bdap_value_in_workbook_by_label(wb_bdap, label: str, label_cache: Optio
     return None, None
 
 
-def find_bdap_value_with_fallback(ws_bdap, base_cell_ref: str, max_offset: int = 2):
-    """Trova il valore a partire da una cella, con fallback sulle righe adiacenti."""
+def find_bdap_value_with_fallback(ws_bdap, base_cell_ref: str, max_offset: int = 2) -> tuple[Optional[object], Optional[str]]:
+    """Trova un valore numerico a partire da una cella base, tollerando lievi spostamenti di riga.
+
+    Verifica inizialmente ``base_cell_ref``. Se vuota o non numerica, scansiona le righe adiacenti
+    entro ``max_offset`` righe sopra e sotto mantenendo invariata la colonna.
+
+    Args:
+        ws_bdap: Foglio di lavoro OpenPyXL.
+        base_cell_ref: Coordinata di cella standard (es. ``'B28'``).
+        max_offset: Tolleranza massima di righe sopra e sotto (default: 2).
+
+    Returns:
+        Tupla ``(valore_numerico, coordinata_effettiva)`` oppure ``(None, None)``.
+    """
     try:
         row, col = coordinate_to_tuple(base_cell_ref)
     except Exception:
@@ -254,8 +279,25 @@ def find_bdap_value_by_expected_label_near_cell(
     label_check_cells: Optional[list[str]] = None,
     strict_expected_label: bool = False,
     search_key_prefix: str = None,
-):
-    """Risolve il valore vicino a una cella fissa solo se il titolo di riga vicino corrisponde all'etichetta attesa."""
+) -> tuple[Optional[object], Optional[str]]:
+    """Risolve un valore contabile verificando che l'etichetta associata coincida con quella attesa.
+
+    Previene errori di lettura su celle spostate convalidando l'intestazione testuale
+    in ``label_check_cells`` o nelle prime colonne della riga candidata.
+
+    Args:
+        ws_bdap: Foglio di lavoro OpenPyXL.
+        base_cell_ref: Coordinata di cella standard (es. ``'C15'``).
+        expected_label: Stringa testuale attesa per la voce (es. ``'Totale entrate correnti'``).
+        max_row_offset: Tolleranza massima di righe da scansionare (default: 2).
+        max_label_columns: Numero massimo di colonne iniziali in cui cercare l'etichetta.
+        label_check_cells: Coordinate esplicite in cui verificare l'etichetta (es. ``['A15']``).
+        strict_expected_label: Se ``True``, richiede una corrispondenza esatta al 100%.
+        search_key_prefix: Prefisso di ricerca opzionale per la colonna A (es. codici quadro).
+
+    Returns:
+        Tupla ``(valore, coordinata_effettiva)`` oppure ``(None, None)``.
+    """
     if not expected_label:
         return None, None
     try:

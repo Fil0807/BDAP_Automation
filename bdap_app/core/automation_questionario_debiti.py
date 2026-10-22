@@ -209,13 +209,18 @@ def process_questionario_debiti_row(
                     if "domandepreliminari" in normalize_text(sname):
                         ws_prelim = q_wb[sname]
                         found_no = False
-                        coord = "B19"
+                        coord = "J19"
                         for r_i in range(1, min(ws_prelim.max_row + 1, 100)):
                             for c_i in range(1, 4):
                                 c_v = ws_prelim.cell(r_i, c_i).value
                                 if c_v and "debitifuoribilancio" in normalize_text(str(c_v)):
                                     found_no = True
-                                    coord = ws_prelim.cell(r_i, c_i).coordinate
+                                    ans_col = 10
+                                    for c_j in range(4, min(ws_prelim.max_column + 1, 15)):
+                                        if ws_prelim.cell(r_i, c_j).value is not None:
+                                            ans_col = c_j
+                                            break
+                                    coord = ws_prelim.cell(r_i, ans_col).coordinate
                                     break
                             if found_no:
                                 break

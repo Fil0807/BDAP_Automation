@@ -171,7 +171,7 @@ def find_row_by_expected_label(
     if not expected_label:
         return None
 
-    # If search_key_prefix is provided, use it for column A lookup (highest priority)
+    # Se search_key_prefix è fornito, usalo per la ricerca nella colonna A (massima priorità)
     if search_key_prefix:
         for row_idx in range(1, ws.max_row + 1):
             cell_value = ws.cell(row=row_idx, column=1).value

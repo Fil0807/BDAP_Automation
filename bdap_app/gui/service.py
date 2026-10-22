@@ -123,10 +123,10 @@ class DesktopAutomationService:
         year_from: str,
         year_to: str,
     ) -> tuple[int, ...]:
-        """Resolve selected years from range or explicit selection."""
+        """Risolve gli anni selezionati dall'intervallo o dalla selezione esplicita."""
         year_from, year_to = year_from.strip(), year_to.strip()
 
-        # Try range selection first
+        # Prova prima la selezione per intervallo
         if year_from and year_to:
             start, end = int(year_from), int(year_to)
             if start > end:
@@ -140,11 +140,11 @@ class DesktopAutomationService:
         if bool(year_from) != bool(year_to):
             raise ValueError("Specifica sia Anno da che Anno a, oppure nessuno.")
 
-        # Fallback to explicit selection
+        # Fallback su selezione esplicita
         return tuple(sorted(set(int(y) for y in explicit_years)))
 
     def run_pipeline(self, args: argparse.Namespace, log=None, progress=None) -> None:
-        """Execute automation pipeline from parsed args."""
+        """Esegue la pipeline di automazione a partire dagli argomenti configurati."""
         emit = log or (lambda _: None)
         self.app_service.run(
             AutomationRequest(

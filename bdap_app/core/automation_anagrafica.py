@@ -30,7 +30,18 @@ def _parse_italian_date(date_str: Optional[str]) -> Optional[datetime]:
 
 
 def extract_anagrafica_from_questionario(q_path: Path) -> dict:
-    """Estrae i dati anagrafici, delibera e verbale da un file questionario."""
+    """Estrae i dati anagrafici, istituzionali e di approvazione da un file questionario Excel.
+
+    Ispeziona i fogli ``ANAGRAFICA`` o ``SCHEDA_ANAGRAFICA`` unitamente al foglio ``DATI``
+    risolvendo eventuali formule di scarto (``OFFSET``/``SCARTO``) tipiche dei modelli Corte dei Conti.
+    Estrae denominazione ente, codice fiscale, sindaco, segretario, revisori, estremi delibera e verbali.
+
+    Args:
+        q_path: Percorso del file Excel di questionario (:class:`pathlib.Path`).
+
+    Returns:
+        Dizionario contenente le coppie chiave-valore anagrafiche individuate.
+    """
     if not q_path.exists():
         return {}
 
@@ -119,7 +130,22 @@ def populate_anagrafica_sheet(
     questionario_files_by_year: dict[int, Path],
     log: Optional[Callable[[str], None]] = None,
 ) -> bool:
-    """Popola il foglio ANAGRAFICA nel workbook specificato."""
+    """Compila il foglio ANAGRAFICA nel workbook di output utilizzando i questionari annuali.
+
+    Popola tre sezioni distinte:
+
+    1. **Dati Generali Ente** (denominazione, codice fiscale, provincia, regione, popolazione);
+    2. **Estremi Deliberazione Rendiconto** (numero delibera, data e calcolo automatico della tempestività rispetto alla scadenza di legge del 30 aprile);
+    3. **Relazione Organo di Revisione** (numero verbale, data, nominativo revisore, codice fiscale ed e-mail).
+
+    Args:
+        workbook_path: Percorso del file Excel di output :class:`pathlib.Path`.
+        questionario_files_by_year: Mappa ``{anno: percorso_file_questionario}``.
+        log: Callback facoltativo per registrare i messaggi di avanzamento.
+
+    Returns:
+        ``True`` se il foglio è stato popolato con successo, altrimenti ``False``.
+    """
     emit = log or (lambda _: None)
 
     if not workbook_path.exists():

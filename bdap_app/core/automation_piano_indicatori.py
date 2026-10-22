@@ -182,7 +182,7 @@ def populate_piano_indicatori_sheet_in_workbook(
         deficitari_count = 0
         total_checked = 0
 
-        # Parametri e rispettive soglie:
+        # Parametri e rispettive soglie (D.M. 28/12/2018, All. l dei Rendiconti per i Comuni: 8 parametri):
         checks = [
             (val_1_1 > Decimal("48")),      # 1.1 > 48%
             (val_2_8 < Decimal("22")),      # 2.8 < 22%
@@ -191,7 +191,6 @@ def populate_piano_indicatori_sheet_in_workbook(
             (val_12_4 > Decimal("1.2")),    # 12.4 > 1.20%
             (val_13_1 > Decimal("1")),      # 13.1 > 1%
             (val_13_tot > Decimal("0.6")),  # 13.2+13.3 > 0.60%
-            (val_9_2 > Decimal("0")),       # 9.2 > 0 (ritardo medio)
         ]
         if val_risc is not None:
             checks.append(val_risc < Decimal("47"))  # Riscossione < 47%
@@ -201,7 +200,7 @@ def populate_piano_indicatori_sheet_in_workbook(
             if c:
                 deficitari_count += 1
 
-        # Riga 16: conteggio parametri deficitari riscontrati (es. "1 su 9")
+        # Riga 16: conteggio parametri deficitari riscontrati (es. "0 su 8")
         r_count = _find_indicatori_row_by_code_or_text(
             ws_target,
             "",

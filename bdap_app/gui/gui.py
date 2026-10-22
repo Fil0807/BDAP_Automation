@@ -19,7 +19,7 @@ except ImportError:
 # Usa TkinterDnD.Tk se disponibile, altrimenti usa Tk standard
 BaseTk = TkinterDnD.Tk if TkinterDnD is not None else tk.Tk
 
-# Allow running this file directly by exposing project root.
+# Consente di eseguire direttamente questo file esponendo la radice del progetto.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -278,7 +278,7 @@ class BdapGui(BaseTk):
         self.minsize(920, 600)
         self.configure(bg="#f0f5fa")
 
-        # UI state
+        # Stato della UI
         self.workspace_var = tk.StringVar(value="")
         self.comune_var = PlaceholderStringVar(placeholder="Scegli un comune...")
         self.year_mode_var = tk.StringVar(value="all")
@@ -294,14 +294,14 @@ class BdapGui(BaseTk):
         self.year_from_var = PlaceholderStringVar(placeholder="AAAA")
         self.year_to_var = PlaceholderStringVar(placeholder="AAAA")
 
-        # Internal state
+        # Stato interno
         self.service = DesktopAutomationService(project_root=PROJECT_ROOT)
         self.drag_drop_enabled = TkinterDnD is not None and DND_FILES is not None
         self._scroll_canvas: tk.Canvas | None = None
         self._scroll_window_id: int | None = None
         self._touchpad_scroll_remainder = 0.0
 
-        # Widget refs
+        # Riferimenti ai widget
         self.header_subtitle_label: tk.Label | ttk.Label | None = None
         self.status_label: tk.Label | ttk.Label | None = None
         self.progress_frame: tk.Frame | ttk.Frame | None = None
@@ -342,7 +342,7 @@ class BdapGui(BaseTk):
         container.columnconfigure(0, weight=1)
         container.rowconfigure(0, weight=1)
 
-        # Setup scroll container
+        # Configurazione del contenitore con scroll
         canvas = tk.Canvas(container, bg="#f0f5fa", highlightthickness=0, bd=0)
         canvas.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
@@ -357,13 +357,13 @@ class BdapGui(BaseTk):
         canvas.bind("<Enter>", lambda _: self._bind_mousewheel(True))
         canvas.bind("<Leave>", lambda _: self._bind_mousewheel(False))
 
-        # Root content frame with comfortable padding
+        # Frame radice dei contenuti con spaziatura confortevole
         root = ttk.Frame(scroll_content, padding=(24, 16), style="App.TFrame")
         root.grid(row=0, column=0, sticky="nsew")
         scroll_content.columnconfigure(0, weight=1)
         root.columnconfigure(0, weight=1)
 
-        # Build UI sections
+        # Costruzione delle sezioni della UI
         self._build_header(root)
         self._build_data_frame(root)
         self._build_params_frame(root)
@@ -375,12 +375,12 @@ class BdapGui(BaseTk):
         header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         header.columnconfigure(1, weight=1)
 
-        # Left Icon (Document + Cog)
+        # Icona sinistra (Documento + Ingranaggio)
         self._img_header_icon = icons.create_header_main_icon(68)
         lbl_icon = tk.Label(header, image=self._img_header_icon, bg="#f0f5fa")
         lbl_icon.grid(row=0, column=0, rowspan=2, padx=(0, 14), sticky="w")
 
-        # Titles
+        # Titoli
         title_box = tk.Frame(header, bg="#f0f5fa")
         title_box.grid(row=0, column=1, sticky="w", pady=(4, 0))
 
@@ -402,7 +402,7 @@ class BdapGui(BaseTk):
         )
         self.header_subtitle_label.pack(anchor="w", pady=(3, 0))
 
-        # Right Illustration
+        # Illustrazione destra
         self._img_header_ill = icons.create_header_illustration(190, 105)
         lbl_ill = tk.Label(header, image=self._img_header_ill, bg="#f0f5fa")
         lbl_ill.grid(row=0, column=2, rowspan=2, sticky="e")
@@ -412,7 +412,7 @@ class BdapGui(BaseTk):
         card = RoundedCard(parent, padding=(22, 16))
         card.grid(row=1, column=0, sticky="ew", pady=(0, 14))
 
-        # Card Header: Icon + Title
+        # Intestazione card: Icona + Titolo
         h_frame = tk.Frame(card.inner, bg="#ffffff")
         h_frame.pack(fill="x", anchor="w", pady=(0, 14))
         self._img_card_data = icons.create_badge_database(30)
@@ -425,7 +425,7 @@ class BdapGui(BaseTk):
             bg="#ffffff",
         ).pack(side="left")
 
-        # Field Label: Workspace root
+        # Etichetta campo: Radice workspace
         lbl_ws = tk.Label(
             card.inner,
             text=ui_text.FIELD_WORKSPACE_ROOT,
@@ -468,7 +468,7 @@ class BdapGui(BaseTk):
         )
         btn_refresh.pack(side="left")
 
-        # Drop Zone
+        # Area di rilascio (Drop Zone)
         self.drop_zone = DropZoneCanvas(card.inner, command=self.select_workspace)
         self.drop_zone.pack(fill="x", pady=(2, 0))
 
@@ -482,7 +482,7 @@ class BdapGui(BaseTk):
         card = RoundedCard(parent, padding=(22, 16))
         card.grid(row=2, column=0, sticky="ew", pady=(0, 14))
 
-        # Card Header: Icon + Title
+        # Intestazione scheda: Icona + Titolo
         h_frame = tk.Frame(card.inner, bg="#ffffff")
         h_frame.pack(fill="x", anchor="w", pady=(0, 14))
         self._img_card_params = icons.create_badge_sliders(30)
@@ -495,7 +495,7 @@ class BdapGui(BaseTk):
             bg="#ffffff",
         ).pack(side="left")
 
-        # Label: Seleziona il comune *
+        # Etichetta: Seleziona il comune *
         lbl_comune_box = tk.Frame(card.inner, bg="#ffffff")
         lbl_comune_box.pack(anchor="w", pady=(0, 6))
         tk.Label(
@@ -513,7 +513,7 @@ class BdapGui(BaseTk):
             bg="#ffffff",
         ).pack(side="left")
 
-        # Comune Combobox
+        # Menu a discesa (Combobox) Comune
         self.comune_combo = ttk.Combobox(
             card.inner,
             textvariable=self.comune_var,
@@ -526,7 +526,7 @@ class BdapGui(BaseTk):
         self.comune_combo.bind("<Down>", self._on_comune_open_attempt, add="+")
         self.comune_combo.bind("<space>", self._on_comune_open_attempt, add="+")
 
-        # Seleziona anni row
+        # Riga selezione anni
         years_label_box = tk.Frame(card.inner, bg="#ffffff")
         years_label_box.pack(anchor="w", pady=(0, 6))
         self._img_cal_icon = icons.create_calendar_icon(16, "#1976d2")
@@ -695,7 +695,7 @@ class BdapGui(BaseTk):
         # Mostra la modalita iniziale (predefinita "all")
         self._on_year_mode_changed()
 
-        # Genera Report Excel Button
+        # Pulsante Genera Report Excel
         self._img_excel = icons.create_excel_icon(22)
         self.run_button = ttk.Button(
             card.inner,
@@ -712,7 +712,7 @@ class BdapGui(BaseTk):
         card = RoundedCard(parent, padding=(20, 14))
         card.grid(row=3, column=0, sticky="ew", pady=(0, 14))
 
-        # Status header row
+        # Riga di intestazione stato
         h_frame = tk.Frame(card.inner, bg="#ffffff")
         h_frame.pack(fill="x")
 
@@ -732,7 +732,7 @@ class BdapGui(BaseTk):
         self.chevron_lbl = tk.Label(h_frame, image=self._img_chevron, bg="#ffffff", cursor="hand2")
         self.chevron_lbl.pack(side="right", padx=(0, 4))
 
-        # Progress elements (inside Card 3, revealed when running)
+        # Elementi di avanzamento (nella scheda 3, mostrati durante l'esecuzione)
         self.progress_frame = tk.Frame(card.inner, bg="#ffffff")
         self.progress_frame.pack(fill="x", pady=(10, 0))
 

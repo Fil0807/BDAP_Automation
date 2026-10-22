@@ -50,7 +50,7 @@ def configure_styles(style: ttk.Style) -> None:
 
     master = getattr(style, "master", None)
 
-    # Modern blue & white color palette
+    # Palette colori moderna blu e bianca
     colors = {
         "bg_main": "#f0f5fa",
         "bg_panel": "#f0f5fa",
@@ -87,7 +87,7 @@ def configure_styles(style: ttk.Style) -> None:
         "field_bg": "#ffffff",
     }
 
-    # Widget configurations
+    # Configurazioni dei widget
     configs = {
         "App.TFrame": {"background": colors["bg_main"]},
         "Panel.TFrame": {"background": colors["bg_main"]},
@@ -198,11 +198,11 @@ def configure_styles(style: ttk.Style) -> None:
         },
     }
 
-    # Apply configurations
+    # Applica le configurazioni
     for style_name, config in configs.items():
         style.configure(style_name, **config)
 
-    # State maps
+    # Mappe di stato
     style.map(
         "TRadiobutton",
         background=[("active", colors["bg_card"])],

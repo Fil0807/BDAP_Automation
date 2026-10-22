@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 
 from ..core.automation_fcde import populate_fcde_sheet
 from ..core.automation_piano_indicatori import populate_piano_indicatori_sheet
-from ..core.automation import fill_accounting_analysis
+from ..core.automation import fill_accounting_analysis, format_inserted_data_cells_center
 from ..core.automation_search import find_sheet, find_year_column
 from ..core.automation_anagrafica import populate_anagrafica_sheet
 from ..core.automation_questionario import _discover_questionario_workbook
@@ -53,8 +53,20 @@ __all__ = [
 ]
 
 
-# Analizza una lista separata da virgole di anni in una lista intera ordinata e unica.
 def parse_years_arg(years_arg: str) -> list[int]:
+    """Analizza una lista separata da virgole di anni in una lista intera ordinata e univoca.
+
+    Esempio: ``"2021, 2023, 2022"`` produce ``[2021, 2022, 2023]``.
+
+    Args:
+        years_arg: Stringa contenente gli anni separati da virgole.
+
+    Returns:
+        Lista di interi rappresentanti gli anni selezionati, ordinati e privi di duplicati.
+
+    Raises:
+        ValueError: Se la stringa passata è vuota o non contiene anni validi.
+    """
     years: list[int] = []
     for token in years_arg.split(","):
         token = token.strip()
@@ -67,6 +79,17 @@ def parse_years_arg(years_arg: str) -> list[int]:
 
 
 def _discover_years_from_workbook(workbook_path: Path) -> list[int]:
+    """Scansiona le intestazioni del workbook alla ricerca degli anni supportati.
+
+    Ispeziona le prime 12 righe e 20 colonne di ciascun foglio cercando valori numerici
+    riconducibili ad anni (es. 2020..2030).
+
+    Args:
+        workbook_path: Percorso del file Excel :class:`pathlib.Path`.
+
+    Returns:
+        Lista ordinata di anni unici rilevati nel modello.
+    """
     years: set[int] = set()
     wb = load_workbook(workbook_path, read_only=True, data_only=True)
     try:
@@ -89,10 +112,21 @@ def resolve_years_to_process(
     template_years: list[int],
     bdap_years: list[int],
 ) -> list[int]:
-    """Resolve the exact years requested for the run.
+    """Risolve l'elenco esatto degli anni richiesti per l'elaborazione corrente.
 
-    Explicit GUI/CLI selections are respected as-is. The template is used as a
-    fallback only when no year selection was provided.
+    Applica le seguenti priorità:
+    1. Se è specificato ``--all-years``, restituisce tutti gli anni BDAP disponibili.
+    2. Se è specificato ``--years``, elabora l'elenco esplicito.
+    3. Se è specificato ``--year``, elabora il singolo anno.
+    4. Altrimenti ricorre agli anni individuati nel template, o come fallback agli anni BDAP.
+
+    Args:
+        args: Argomenti analizzati dalla CLI o configurati dalla GUI.
+        template_years: Elenco degli anni presenti nelle intestazioni del template.
+        bdap_years: Elenco degli anni trovati nei file BDAP della cartella comune.
+
+    Returns:
+        Lista ordinata di anni da processare.
     """
     if args.all_years:
         return sorted(set(bdap_years))
@@ -104,17 +138,27 @@ def resolve_years_to_process(
 
 
 def _should_use_anchor_bdap(args: argparse.Namespace) -> bool:
-    """Allow --bdap as a single-year fallback, but not for multi-year discovery."""
+    """Verifica se utilizzare il file BDAP principale come ancora di fallback ad anno singolo."""
     return args.year is not None and not args.all_years and args.years is None
 
 
 def validate_inputs(args: argparse.Namespace) -> None:
-    # Valida gli input richiesti in base alla modalità selezionata (anno singolo o multi-anno).
+    """Valida l'esistenza dei file e delle directory di input richiesti per l'elaborazione.
+
+    In modalità multi-anno verifica l'esistenza di ``args.bdap_dir``; in modalità
+    anno singolo verifica ``args.bdap``.
+
+    Args:
+        args: Argomenti con i percorsi di lavoro.
+
+    Raises:
+        FileNotFoundError: Se uno o più percorsi obbligatori non esistono su disco.
+    """
     source_analysis = args.template if getattr(args, "template", None) else args.analysis
     required_paths = [source_analysis]
     auto_multi_year_mode = args.all_years or args.years is not None or args.year is None
     if auto_multi_year_mode:
-        required_paths.append(args.bdap_dir) # In multi-year mode, require the whole BDAP directory to discover files by year.
+        required_paths.append(args.bdap_dir) # In modalita' multi-anno, richiede l'intera directory BDAP per individuare i file per anno.
     else:
         required_paths.append(args.bdap)
 
@@ -125,7 +169,15 @@ def validate_inputs(args: argparse.Namespace) -> None:
 
 
 def apply_comune_defaults(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    # Applica i valori predefiniti specifici per il comune rilevati automaticamente solo per argomenti non espliciti.
+    """Applica i percorsi predefiniti specifici per il comune agli argomenti non specificati esplicitamente.
+
+    Risolve automaticamente la cartella base del comune, la cartella ``1 doc/dati BDAP``,
+    il file di analisi e il percorso di output predefinito (``<Nome>_compilato.xlsx``).
+
+    Args:
+        args: Argomenti correnti da aggiornare in-place.
+        parser: Parser degli argomenti CLI per controllare i valori di default.
+    """
     if not args.comune:
         return
 
@@ -148,7 +200,14 @@ def apply_comune_defaults(args: argparse.Namespace, parser: argparse.ArgumentPar
 
 
 def ensure_analysis_input(args: argparse.Namespace) -> None:
-    # Verifica che l'input di analisi esista, salvo se è fornito un template esplicito.
+    """Verifica che il file di analisi esista su disco, a meno che non sia specificato un template.
+
+    Args:
+        args: Argomenti contenenti i percorsi di analisi o template.
+
+    Raises:
+        FileNotFoundError: Se il file di analisi non esiste.
+    """
     if getattr(args, "template", None):
         return
 
@@ -159,7 +218,17 @@ def ensure_analysis_input(args: argparse.Namespace) -> None:
 
 
 def _resolve_template_source(template_path: Path) -> Path:
-    # Risolve il percorso reale del template .xlsx, gestendo l'indirezione da .gsheet esportato.
+    """Risolve il percorso effettivo del template Excel, gestendo eventuali collegamenti .gsheet.
+
+    Args:
+        template_path: Percorso del template configurato.
+
+    Returns:
+        Percorso valido con estensione ``.xlsx``.
+
+    Raises:
+        ValueError: Se il file è un collegamento ``.gsheet`` non esportato in ``.xlsx``.
+    """
     if template_path.suffix.lower() != ".gsheet":
         return template_path
 
@@ -174,7 +243,22 @@ def _resolve_template_source(template_path: Path) -> Path:
 
 
 def _prepare_output_from_source(args: argparse.Namespace, log: Callable[[str], None]) -> Path:
-    # Copia il workbook sorgente selezionato nel percorso di output prima delle operazioni di compilazione.
+    """Copia il file sorgente selezionato nel percorso di output prima dell'elaborazione.
+
+    Preserva integralmente il template originale eseguendo una copia fisica su cui
+    verranno apportate le modifiche.
+
+    Args:
+        args: Argomenti contenenti ``args.analysis``, ``args.template`` e ``args.output``.
+        log: Funzione di callback per i log.
+
+    Returns:
+        Il percorso :class:`pathlib.Path` del file sorgente effettivamente copiato.
+
+    Raises:
+        ValueError: Se il formato del template non è supportato.
+        FileNotFoundError: Se il file sorgente non esiste.
+    """
     source_path = args.analysis
     if getattr(args, "template", None):
         source_path = _resolve_template_source(args.template)
@@ -188,7 +272,7 @@ def _prepare_output_from_source(args: argparse.Namespace, log: Callable[[str], N
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
    
-    # Copy source to output path before processing. 
+    # Copia la sorgente nel percorso di output prima dell'elaborazione.
     # Questo preserva il file originale e permette aggiornamenti in-place sul file di output.
     shutil.copy2(source_path, args.output) 
     
@@ -203,7 +287,27 @@ def run_pipeline(
     log: Callable[[str], None] = print,
     progress: Optional[Callable[[float, int, str], None]] = None,
 ) -> None:
-    # Esegue la pipeline end-to-end per gli anni e i fogli selezionati.
+    """Esegue la pipeline end-to-end di compilazione per gli anni e i fogli selezionati.
+
+    Questa funzione coordina tutte le fasi di esecuzione:
+    1. Convalida input e preparazione output;
+    2. Determinazione degli anni e dei fogli da processare;
+    3. Popolamento annuale di FCDE, Piano Indicatori e fogli di bilancio;
+    4. Sincronizzazione formule e percentuali tra FCDE ed ANALISI CONTABILE;
+    5. Estrazione anagrafica da questionario;
+    6. Ispezione documentale PDF e scrittura della scheda CONTROLLI-POST;
+    7. Formattazione e centraggio celle, ottimizzazione commenti.
+
+    Args:
+        args: Namespace contenente tutti i parametri di configurazione (comune, workspace, anni, output).
+        log: Funzione di callback per la registrazione dei messaggi di log (default: :func:`print`).
+        progress: Funzione di callback opzionale con firma ``(completed, total, message)``
+            per aggiornare la barra di avanzamento della GUI.
+
+    Raises:
+        ValueError: Se non è possibile determinare gli anni da processare.
+        FileNotFoundError: Se file o directory essenziali non sono reperibili.
+    """
     def emit_progress(completed: float, total: int, message: str) -> None:
         if progress is None:
             return
@@ -336,9 +440,9 @@ def run_pipeline(
         )
 
         if getattr(args, "template", None) and year_updated == 0:
-            # If the year-specific pass produced no writes, retry it on a fresh
-            # copy of the template and merge only that year column into the final
-            # workbook. This avoids cross-year state from previous passes.
+            # Se il passaggio specifico per l'anno non ha prodotto scritture, riprova su una
+            # copia pulita del template e unisci solo la colonna di quell'anno nel workbook
+            # finale. Questo evita interferenze di stato tra anni da passaggi precedenti.
             rescue_source = source_analysis
             rescue_work = args.output.parent / f".{args.output.stem}.recheck-{year}.xlsx"
             shutil.copy2(rescue_source, rescue_work)
@@ -468,13 +572,35 @@ def run_pipeline(
             log=log,
         )
 
+    # Allinea al centro sia verticale che orizzontale tutte le celle dei dati inseriti
+    try:
+        format_inserted_data_cells_center(args.output, log=log)
+    except Exception as exc:
+        log(f"Avviso durante la formattazione centrata delle celle: {exc}")
+
 
 def sync_fcde_and_analisi_contabile(
     workbook_path: Path,
     years: list[int],
     log: Optional[Callable[[str], None]] = None,
 ) -> None:
-    """Sincronizza bidirezionalmente FCDE e ANALISI CONTABILE."""
+    """Sincronizza bidirezionalmente i valori e le formule tra i fogli FCDE e ANALISI CONTABILE.
+
+    Esegue le seguenti operazioni per ciascun anno specificato:
+    1. Legge la quota di avanzo "Parte disponibile" dal foglio ``ANALISI CONTABILE`` (riga 19);
+    2. Scrive nel foglio ``FCDE`` (riga 6) la formula Excel dinamica di collegamento:
+       ``='ANALISI CONTABILE'!<Colonna>19``;
+    3. Imposta in ``FCDE`` la formula per la percentuale comprensiva della parte disponibile
+       (riga 8) e il metodo di calcolo "ordinario" (riga 9);
+    4. Sincronizza su ``ANALISI CONTABILE`` la percentuale ordinaria di copertura FCDE (riga 25)
+       e la percentuale comprensiva della parte disponibile (riga 26), corredandole con
+       commenti di tracciabilità.
+
+    Args:
+        workbook_path: Percorso del file Excel di output :class:`pathlib.Path`.
+        years: Elenco degli anni per cui applicare la sincronizzazione.
+        log: Funzione di log opzionale per messaggi informativi.
+    """
     wb = load_workbook(workbook_path)
     try:
         ws_ac = find_sheet(wb, "ANALISI CONTABILE")

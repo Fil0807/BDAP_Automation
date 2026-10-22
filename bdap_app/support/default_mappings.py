@@ -466,16 +466,19 @@ TEMPLATE_SOURCES: dict = {
     # 23. fondocontenzioso - Row 26 AC / Row 24 MAPPATURE_BDAP
     # -------------------------------------------------------------------------
     'fondocontenzioso': {
-        'cell_ref': 'I16',
+        'cell_ref': 'I17',
         'default_if_missing': 0,
         'expected_label': [
             'Totale Fondo contenzioso',
             'Fondo contenzioso',
         ],
         'fallback_cell_refs': [
+            'I17',
+            'I16',
             'I14',
         ],
         'label_check_cells': [
+            'B17',
             'B16',
             'B14',
         ],
@@ -516,18 +519,19 @@ TEMPLATE_SOURCES: dict = {
         'cell_ref': 'I23',
         'default_if_missing': 0,
         'expected_label': [
-            'Totale Fondo di garanzia debiti commerciali',
             'FONDO GARANZIA DEBITI COMMERCIALI',
+            'Totale Fondo di garanzia debiti commerciali',
             'Fondo di garanzia debiti commerciali',
         ],
         'fallback_cell_refs': [
-            'I20',
             'I19',
+            'I23',
+            'I20',
         ],
         'label_check_cells': [
+            'D19',
             'B23',
             'B20',
-            'D19',
             'D23',
         ],
         'only_fill_if_found': True,

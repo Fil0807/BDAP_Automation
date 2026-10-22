@@ -3,7 +3,7 @@
 import logging
 import re
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 from decimal import Decimal
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
@@ -74,7 +74,20 @@ IGNORE_ROW_LABEL_TOKENS = {"fonte?", "fonte", "note", "note:"}
 
 
 def extract_row_label(ws, row_idx: int, max_columns: int = 4) -> str:
-    """Estrae l'etichetta di riga più probabile dal lato sinistro del foglio."""
+    """Estrae l'etichetta testuale descrittiva di una riga contabile.
+
+    Esamina prioritariamente la colonna 3 (C), dove nei template risiede generalmente
+    la descrizione della voce contabile; se vuota o contenente diciture generiche (come 'note' o 'fonte'),
+    scansiona da sinistra a destra le prime ``max_columns`` colonne.
+
+    Args:
+        ws: Foglio di lavoro OpenPyXL.
+        row_idx: Indice 1-based della riga da ispezionare.
+        max_columns: Numero massimo di colonne iniziali da scansionare (default: 4).
+
+    Returns:
+        L'etichetta testuale individuata, ripulita da spazi bianchi, o una stringa vuota.
+    """
     if ws.max_column >= 3:
         val_c = ws.cell(row=row_idx, column=3).value
         if isinstance(val_c, str) and val_c.strip():
@@ -92,9 +105,22 @@ def extract_row_label(ws, row_idx: int, max_columns: int = 4) -> str:
     return ""
 
 
-
 def resolve_bdap_sheet(wb_bdap, sheet_idx: str):
-    """Risolve il foglio BDAP dato un indice 1-based dello sheet."""
+    """Risolve un foglio del rendiconto BDAP a partire dal suo indice 1-based.
+
+    Converte l'indice (stringa o intero) e restituisce il relativo oggetto Worksheet OpenPyXL.
+
+    Args:
+        wb_bdap: Oggetto Workbook OpenPyXL del rendiconto BDAP.
+        sheet_idx: Indice del foglio (1-based, es. ``'10'`` per il decimo foglio).
+
+    Returns:
+        L'oggetto Worksheet OpenPyXL corrispondente.
+
+    Raises:
+        ValueError: Se l'indice non è numerico intero, oppure è minore di 1 o maggiore del
+            numero totale di fogli presenti nel file.
+    """
     try:
         idx = int(sheet_idx)
     except (ValueError, TypeError):
@@ -190,6 +216,10 @@ def _resolve_special_source_entry(
         if "incidenzaprime3titoli" in mapping_sources:
             return "incidenzaprime3titoli", mapping_sources["incidenzaprime3titoli"]
 
+    if "fcde" in normalized_row_label and "partedisponibile" in normalized_row_label:
+        if "fcdepluspartedisponibile" in mapping_sources:
+            return "fcdepluspartedisponibile", mapping_sources["fcdepluspartedisponibile"]
+
     if normalized_row_label in mapping_sources:
         return normalized_row_label, mapping_sources[normalized_row_label]
 
@@ -197,9 +227,9 @@ def _resolve_special_source_entry(
         key_norm = normalize_text(key)
         return "fcde" not in key_norm or "fcde" in normalized_row_label
 
-    # Quick check: if the normalized label contains 'titolo' followed by a roman
-    # numeral (e.g. 'titoloiii'), try to map directly to a key that encodes the
-    # spelled-out number (e.g. 'tre') to avoid fuzzy collisions.
+    # Controllo rapido: se l'etichetta normalizzata contiene 'titolo' seguito da un numero
+    # romano (es. 'titoloiii'), tenta la mappatura diretta a una chiave che codifica il
+    # numero per esteso (es. 'tre') per evitare collisioni con la ricerca fuzzy.
     roman_to_it_quick = {'i': 'uno', 'ii': 'due', 'iii': 'tre', 'iv': 'quattro', 'v': 'cinque'}
     for r in sorted(roman_to_it_quick.keys(), key=len, reverse=True):
         if f"titolo{r}" in normalized_row_label:
@@ -247,10 +277,10 @@ def _resolve_special_source_entry(
     tied = [s for s in scores if s[0] == top_score and s[1] == top_overlap]
     chosen_from_tied = None
     if len(tied) > 1:
-        # Detect roman numerals by substring in the normalized label (covers cases
-        # like 'titoloiii' where tokenization produces a single long token).
+        # Rileva i numeri romani per sottostringa nell'etichetta normalizzata (copre casi
+        # come 'titoloiii' dove la tokenizzazione produce un singolo token lungo).
         roman_to_it = {'i': 'uno', 'ii': 'due', 'iii': 'tre', 'iv': 'quattro', 'v': 'cinque'}
-        # Prefer longest matches first (e.g. 'iii' before 'i')
+        # Privilegia le corrispondenze più lunghe prima (es. 'iii' prima di 'i')
         roman_in_label = sorted([r for r in roman_to_it.keys() if r in normalized_row_label], key=len, reverse=True)
         if roman_in_label:
             preferred = None
@@ -271,9 +301,9 @@ def _resolve_special_source_entry(
     # Se non abbiamo trovato un vincitore chiaro tra i candidati in parità, ma un numero romano
     # appare nell'etichetta, permette la selezione di un candidato il cui token numerico scritto
     # corrisponde al numero romano.
-    # Also check for roman numerals as substrings in the normalized label
+    # Controlla inoltre i numeri romani come sottostringhe nell'etichetta normalizzata
     roman_to_it = {'i': 'uno', 'ii': 'due', 'iii': 'tre', 'iv': 'quattro', 'v': 'cinque'}
-    # Prefer longest matches first (e.g. 'iii' before 'i')
+    # Privilegia le corrispondenze più lunghe prima (es. 'iii' prima di 'i')
     roman_in_label = sorted([r for r in roman_to_it.keys() if r in normalized_row_label], key=len, reverse=True)
     if roman_in_label:
         best_score_overall = scores[0][0]
@@ -284,8 +314,8 @@ def _resolve_special_source_entry(
                 if word in key_tokens and score >= (best_score_overall - 0.06):
                     if score >= 0.84:
                         return key, source
-    # If the roman-fallback didn't return a match but we found a preferred
-    # candidate among tied entries earlier, return it now.
+    # Se il fallback dei numeri romani non ha prodotto corrispondenze ma in precedenza
+    # era stato identificato un candidato preferito tra quelli in parità, restituiscilo ora.
     if chosen_from_tied is not None:
         return chosen_from_tied
 
@@ -374,8 +404,37 @@ def fill_accounting_analysis(
     clear_when_missing: bool = False,
     keep_source_reference: bool = True,
     progress: Optional[Callable[[int, int], None]] = None,
-):
-    """Riempe la colonna dell'anno target nel foglio di analisi risolvendo i riferimenti BDAP."""
+) -> tuple[int, int]:
+    """Compila la colonna dell'anno specificato nel foglio di analisi contabile.
+
+    Scansiona tutte le righe del foglio ``analysis_sheet``:
+
+    * Estrae l'etichetta contabile tramite :func:`extract_row_label`;
+    * Consulta :data:`bdap_app.support.default_mappings.TEMPLATE_SOURCES`;
+    * Se la riga appartiene a un gestore delegato (questionario, debiti, indicatori), richiama la relativa routine;
+    * Altrimenti risolve deterministica o euristicamente il valore dal rendiconto BDAP;
+    * Formatta il valore numerico secondo lo standard italiano (:func:`format_value_italian`);
+    * Applica il commento di tracciabilità con i dettagli della cella BDAP sorgente.
+
+    Args:
+        analysis_path: Percorso del file Excel di analisi (o template) da compilare.
+        bdap_path: Percorso del file Excel BDAP per l'anno specificato (può essere ``None`` se ``clear_when_missing=True``).
+        output_path: Percorso in cui salvare il file compilato.
+        year: Anno contabile da popolare.
+        analysis_sheet: Nome del foglio da compilare (predefinito: ``"analisi contabile"``).
+        reference_year: Anno opzionale da cui dedurre la struttura delle colonne.
+        clear_when_missing: Se ``True``, cancella i valori delle celle target se il file BDAP manca.
+        keep_source_reference: Se ``True``, inserisce i commenti di tracciabilità sulle celle.
+        progress: Callback opzionale ``(current_row, total_rows)`` per notificare l'avanzamento.
+
+    Returns:
+        Tupla ``(updated_rows, unresolved_references)`` con il numero di celle scritte
+        e il numero di riferimenti non risolti.
+
+    Raises:
+        ValueError: Se ``bdap_path`` è ``None`` e ``clear_when_missing`` è ``False``,
+            oppure se la colonna dell'anno non viene individuata nel foglio.
+    """
     wb_analysis = load_workbook(analysis_path) # Template di analisi contabile
     wb_bdap = None
     if not clear_when_missing:
@@ -512,7 +571,7 @@ def fill_accounting_analysis(
                         **handler_kwargs,
                     )
 
-                    # store discovered workbooks for cleanup
+                    # memorizza le cartelle di lavoro individuate per la chiusura finale
                     if source_workbook == "questionario" and wb_x is not None:
                         wb_questionario = wb_x
                         wb_questionario_formula = wb_x_formula
@@ -536,11 +595,11 @@ def fill_accounting_analysis(
                         fcde_tot, fcde_cell_ref = read_fcde_totale_from_workbook(wb_analysis, year)
                     if fcde_tot is not None:
                         target_cell.value = format_value_italian(fcde_tot)
-                        if keep_source_reference and bdap_path is not None:
+                        if keep_source_reference:
                             target_cell.comment = create_source_comment(
-                                source_file_name=bdap_path.name,
+                                source_file_name=analysis_path.name,
                                 sheet_name="FCDE",
-                                cell_ref=fcde_cell_ref or "FCDE",
+                                cell_ref=fcde_cell_ref or f"{get_column_letter(year_col)}5",
                             )
                         updated_rows += 1
                         continue
@@ -565,11 +624,11 @@ def fill_accounting_analysis(
                             percent=bool(special_source.get("is_percentage", False)),
                         )
                         target_cell.value = formatted_value
-                        if keep_source_reference and bdap_path is not None:
+                        if keep_source_reference:
                             target_cell.comment = create_source_comment(
-                                source_file_name=bdap_path.name,
+                                source_file_name=analysis_path.name,
                                 sheet_name="FCDE",
-                                cell_ref=fcde_cell_ref or "FCDE!I7",
+                                cell_ref=fcde_cell_ref or f"{get_column_letter(year_col)}7",
                             )
                         updated_rows += 1
                         continue
@@ -585,11 +644,12 @@ def fill_accounting_analysis(
                             percent=bool(special_source.get("is_percentage", False)),
                         )
                         target_cell.value = formatted_value
-                        if keep_source_reference and bdap_path is not None:
+                        if keep_source_reference:
                             target_cell.comment = create_source_comment(
-                                source_file_name=bdap_path.name,
+                                source_file_name=analysis_path.name,
                                 sheet_name="FCDE",
-                                cell_ref=fcde_cell_ref or "FCDE!I8",
+                                cell_ref=fcde_cell_ref or f"{get_column_letter(year_col)}8",
+                                detail="calcolata come (Importo FCDE + Parte disponibile AC riga 19) / Totale residui EP * 100",
                             )
                         updated_rows += 1
                         continue
@@ -662,11 +722,12 @@ def fill_accounting_analysis(
 
                     # Se sum_cells contiene solo la la colonna:
                     sum_cells_cfg = list(special_source.get("sum_cells", []))
+                    last_matched_text = ""
                     col_only = [c for c in sum_cells_cfg if isinstance(c, str) and re.match(r'^[A-Za-z]+$', c.strip())]
                     if col_only:
                         for col_letter in col_only:
                             col_idx = column_index_from_string(col_letter.upper())
-                            # scan rows for label occurrence
+                            # scansiona le righe alla ricerca dell'etichetta
                             for r in range(1, ws_bdap_src.max_row + 1):
                                 row_text = ""
                                 max_check_cols = min(6, ws_bdap_src.max_column)
@@ -693,6 +754,7 @@ def fill_accounting_analysis(
                                     total += num_candidate
                                     found_any = True
                                     last_ref = f"{col_letter.upper()}{r}"
+                                    last_matched_text = row_text
 
                         value = total if found_any else None
                         actual_cell_ref = last_ref
@@ -772,8 +834,8 @@ def fill_accounting_analysis(
                             if found_title_row is not None:
                                 target_row = found_title_row
 
-                            # If the mapping provides explicit year_cell_ref (possibly as a list),
-                            # prefer that to resolve the year column.
+                            # Se la mappatura fornisce un year_cell_ref esplicito (anche come lista),
+                            # usalo prioritariamente per risolvere la colonna dell'anno.
                             y_col = None
                             if not use_static_refs and "year_cell_ref" in special_source:
                                 refs = special_source["year_cell_ref"]
@@ -802,18 +864,18 @@ def fill_accounting_analysis(
                                 candidate = year_cell.value
                                 candidate_ref = year_cell.coordinate
                             else:
-                                # If an explicit year column could not be resolved, try a
-                                # conservative fallback: read the static base `cell_ref`
-                                # (no offset). This helps when older questionario files
-                                # store values in fixed columns without a clear year header
-                                # and avoids leaving the target empty for years like 2021.
+                                # Se non è stato possibile risolvere una colonna anno esplicita, tenta un
+                                # fallback conservativo: leggi il `cell_ref` statico di base
+                                # (senza offset). Questo aiuta quando file del questionario meno recenti
+                                # memorizzano i valori in colonne fisse senza una chiara intestazione anno
+                                # ed evita di lasciare il target vuoto per anni come il 2021.
                                 try:
                                     actual_ref = f"{get_column_letter(base_col)}{target_row}" if base_col else cell_ref
                                     candidate, candidate_ref = find_bdap_value_with_fallback(ws_bdap_src, actual_ref, max_offset=0)
                                 except Exception:
-                                    # If fallback also fails, mark as aborted only when
-                                    # the table actually contains year headers (to avoid
-                                    # masking real missing-year situations).
+                                    # Se anche il fallback fallisce, contrassegna come interrotto solo quando
+                                    # la tabella contiene effettivamente intestazioni di anno (per evitare
+                                    # di mascherare situazioni reali di anni mancanti).
                                     if "year_cell_ref" in special_source or _table_has_year_headers(ws_bdap_src, base_row):
                                         year_aborted = True
                                     else:
@@ -823,7 +885,7 @@ def fill_accounting_analysis(
                         logger.debug(
                             f"display_refs: title={title}, cell_ref={cell_ref}, candidate={candidate}, candidate_ref={candidate_ref}, year_aborted={year_aborted}"
                         )
-                        # Always include the title line; missing or aborted -> show 0
+                        # Includi sempre la riga del titolo; mancante o interrotto -> mostra 0
                         if year_aborted:
                             num_val = Decimal('0')
                             last_refs.append(cell_ref)
@@ -872,7 +934,7 @@ def fill_accounting_analysis(
                         # Cerca quale label_check_cell contiene l'etichetta
                         for idx, check_cell_ref in enumerate(label_check_cells_list):
                             try:
-                                # Handle range notation like 'A25:C25'
+                                # Gestisce la notazione di intervallo come 'A25:C25'
                                 if ':' in str(check_cell_ref):
                                     parts = str(check_cell_ref).split(':')
                                     check_cell_ref = parts[0]
@@ -1061,12 +1123,12 @@ def fill_accounting_analysis(
                         mark_unresolved(target_cell, f"No value found for {special_key or row_label}")
                     continue
 
-                # Respect percentage flag and boolean yes/no flag in the source mapping
+                # Rispetta il flag percentuale e il flag booleano si/no nella mappatura sorgente
                 percent_flag = bool(special_source.get("is_percentage", False))
                 yes_no_flag = bool(special_source.get("is_boolean_yes_no", False))
                 formatted_value = format_value_italian(value, percent=percent_flag, boolean_yes_no=yes_no_flag)
                 target_cell.value = formatted_value
-                # If we wrote a multiline display_refs value, enable wrapText so it displays
+                # Se è stato scritto un valore multiriga da display_refs, abilita wrapText per visualizzarlo
                 try:
                     if display_refs_handled:
                         target_cell.alignment = Alignment(wrapText=True)
@@ -1111,6 +1173,14 @@ def fill_accounting_analysis(
                             sheet_name=ws_bdap_src.title if ws_bdap_src else None,
                             label=lbl,
                             detail=f"voce non trovata nella sorgente | valore predefinito {formatted_value}",
+                        )
+                    elif special_key == "fondivincolaticovid" and ws_bdap_src is not None and "a2" in ws_bdap_src.title.lower() and "solidarieta" in normalize_text(last_matched_text):
+                        target_cell.comment = create_source_comment(
+                            source_file_name=source_file_name,
+                            sheet_name=ws_bdap_src.title,
+                            cell_ref=actual_cell_ref,
+                            label=lbl,
+                            detail="importo lordo da All. a2 col. O (Fondo solidarietà alimentare)",
                         )
                     else:
                         target_cell.comment = create_source_comment(
@@ -1178,3 +1248,107 @@ def fill_accounting_analysis(
         wb_bdap.close()
     wb_analysis.close()
     return updated_rows, unresolved_references
+
+
+def format_inserted_data_cells_center(
+    workbook_or_path: Union[str, Path, object],
+    log: Optional[Callable[[str], None]] = None,
+) -> None:
+    """Formatta tutte le celle dei dati compilati con allineamento centrato sia orizzontale che verticale.
+
+    Individua le colonne degli anni nelle intestazioni (es. 2020..2026) e applica
+    l'allineamento centrato mantenendo inalterata l'eventuale proprietà di a capo automatico
+    (wrap_text). Esclude fogli di solo testo come ``MAPPATURE BDAP`` o ``CONTROLLI-POST``.
+
+    Args:
+        workbook_or_path: Percorso del file Excel :class:`pathlib.Path` o stringa, oppure istanza :class:`openpyxl.Workbook`.
+        log: Funzione facoltativa per registrare messaggi informativi sul numero di celle formattate.
+    """
+    should_save = False
+    if isinstance(workbook_or_path, (str, Path)):
+        wb = load_workbook(workbook_or_path)
+        should_save = True
+        save_path = Path(workbook_or_path)
+    else:
+        wb = workbook_or_path
+        save_path = None
+
+    try:
+        def _format_cell_center(cell) -> None:
+            if isinstance(cell, MergedCell):
+                return
+            wt = bool(cell.alignment.wrap_text) if cell.alignment else False
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=wt)
+
+        total_formatted = 0
+        for sname in wb.sheetnames:
+            ws = wb[sname]
+            norm_name = normalize_text(sname)
+            if norm_name in ("mappaturebdap", "controllipost"):
+                continue
+
+            # 1. Rileva colonne per anno (ANALISI CONTABILE, FCDE, Piano Indicatori, ecc.)
+            r_hdr = None
+            year_cols: list[int] = []
+            for r in range(1, min(ws.max_row or 1, 6) + 1):
+                cols: list[int] = []
+                for c in range(1, (ws.max_column or 1) + 1):
+                    val = ws.cell(row=r, column=c).value
+                    y = _coerce_year_value(val)
+                    if y is not None and 2000 <= y <= 2099:
+                        cols.append(c)
+                if len(cols) >= 2:
+                    r_hdr = r
+                    year_cols = cols
+                    break
+
+            if r_hdr is not None and year_cols:
+                sheet_formatted = 0
+                for r in range(r_hdr + 1, (ws.max_row or 1) + 1):
+                    # Controlla se la riga ha contenuto utile (esclude righe vuote in fondo al foglio)
+                    row_has_content = any(
+                        ws.cell(row=r, column=c).value is not None
+                        for c in range(1, min(ws.max_column or 1, 25) + 1)
+                    )
+                    if not row_has_content:
+                        continue
+                    for c in year_cols:
+                        cell = ws.cell(row=r, column=c)
+                        _format_cell_center(cell)
+                        sheet_formatted += 1
+                total_formatted += sheet_formatted
+                if log and sheet_formatted > 0:
+                    log(f"Foglio '{sname}': formattate {sheet_formatted} celle dati al centro.")
+
+            # 2. Gestione specifica foglio ANAGRAFICA
+            elif "anagrafica" in norm_name:
+                sheet_formatted = 0
+                # Sezione 1: Dati generali dell'ente (colonna C, valori)
+                for r in range(5, min(ws.max_row or 1, 11) + 1):
+                    cell = ws.cell(row=r, column=3)
+                    if cell.value is not None:
+                        _format_cell_center(cell)
+                        sheet_formatted += 1
+                # Sezioni 2 e 3: Tabelle per esercizio
+                for r in range(12, (ws.max_row or 1) + 1):
+                    val_b = ws.cell(row=r, column=2).value
+                    y = _coerce_year_value(val_b)
+                    if y is not None and 2000 <= y <= 2099:
+                        for c in range(2, min(ws.max_column or 1, 9) + 1):
+                            cell = ws.cell(row=r, column=c)
+                            if cell.value is not None:
+                                _format_cell_center(cell)
+                                sheet_formatted += 1
+                total_formatted += sheet_formatted
+                if log and sheet_formatted > 0:
+                    log(f"Foglio '{sname}': formattate {sheet_formatted} celle dati al centro.")
+
+        if should_save and save_path is not None:
+            fix_all_comments_in_workbook(wb)
+            wb.save(save_path)
+            if log:
+                log(f"Formattazione centrata completata: {total_formatted} celle aggiornate in {save_path.name}")
+    finally:
+        if should_save:
+            wb.close()
+
