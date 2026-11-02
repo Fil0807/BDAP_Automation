@@ -208,3 +208,12 @@ Versione iniziale del repository, derivata dal lavoro di stage (*Stage_Locatelli
   * **`fondogaranziadebiticommerciali`:**
     * Riordinata la lista delle etichette con priorità per `FONDO GARANZIA DEBITI COMMERCIALI`.
     * Inserite le celle di fallback `I19` e `I23`.
+
+<br>
+<br>
+
+### BDAP_Automation v1.0.0
+* Modifica di allineamento documentale e testuale: Corretti file e stringhe riportanti la versione del programma e aggiornati alle 1.0.0
+
+<br>
+<br>
